@@ -181,6 +181,103 @@ class Second {}
     expect(analysis.exports.has("Second")).toBe(true);
   });
 
+  it("includes a private top-level declaration in localSymbols but not in exports", () => {
+    const text = `
+class _PrivateHelper {}
+class PublicClass {}
+`;
+    const analysis = adapter.analyze("lib/example.dart", text);
+    expect(analysis.localSymbols.has("_PrivateHelper")).toBe(true);
+    expect(analysis.exports.has("_PrivateHelper")).toBe(false);
+    expect(analysis.exports.has("PublicClass")).toBe(true);
+  });
+
+  it("localSymbols is a superset of exports", () => {
+    const text = `
+class _Hidden {}
+class Visible {}
+export 'x.dart' show Reexported;
+`;
+    const analysis = adapter.analyze("lib/barrel.dart", text);
+    for (const name of analysis.exports) {
+      expect(analysis.localSymbols.has(name)).toBe(true);
+    }
+    expect(analysis.localSymbols.has("_Hidden")).toBe(true);
+  });
+
+  it("does not leak indented class members into top-level localSymbols", () => {
+    const text = `class MyService {
+  String greet(String name) => 'hi';
+}`;
+    const analysis = adapter.analyze("lib/my_service.dart", text);
+    expect(analysis.localSymbols.has("MyService")).toBe(true);
+    expect(analysis.localSymbols.has("greet")).toBe(false);
+  });
+
+  it("recognizes Dart 3 class-modifier combinations and captures the class name, not a modifier", () => {
+    const cases: Array<[string, string]> = [
+      ["base class Foo {}", "Foo"],
+      ["final class Foo {}", "Foo"],
+      ["interface class Foo {}", "Foo"],
+      ["sealed class Foo {}", "Foo"],
+      ["abstract base class Foo {}", "Foo"],
+      ["abstract final class Foo {}", "Foo"],
+      ["abstract interface class Foo {}", "Foo"],
+      ["abstract class Foo {}", "Foo"],
+      ["mixin class Foo {}", "Foo"],
+      ["base mixin class Foo {}", "Foo"],
+      ["base mixin Foo {}", "Foo"],
+    ];
+    for (const [decl, expectedName] of cases) {
+      const analysis = adapter.analyze("lib/modifiers.dart", `${decl}\n`);
+      expect(analysis.exports.has(expectedName)).toBe(true);
+      expect(analysis.exports.has("class")).toBe(false);
+      expect(analysis.exports.has("mixin")).toBe(false);
+      expect(analysis.exports.has("base")).toBe(false);
+      expect(analysis.exports.has("final")).toBe(false);
+      expect(analysis.exports.has("interface")).toBe(false);
+      expect(analysis.exports.has("sealed")).toBe(false);
+      expect(analysis.exports.has("abstract")).toBe(false);
+    }
+  });
+
+  it("recognizes extension type declarations (Dart 3.3)", () => {
+    const text = `
+extension type Meters(int value) {}
+extension type const Kilometers(int value) {}
+`;
+    const analysis = adapter.analyze("lib/units.dart", text);
+    expect(analysis.exports.has("Meters")).toBe(true);
+    expect(analysis.exports.has("Kilometers")).toBe(true);
+    expect(analysis.exports.has("type")).toBe(false);
+    expect(analysis.exports.has("const")).toBe(false);
+  });
+
+  it("does not produce a symbol for an unnamed extension (extension on Type {})", () => {
+    const text = `extension on String {}`;
+    const analysis = adapter.analyze("lib/unnamed_extension.dart", text);
+    expect(analysis.exports.has("on")).toBe(false);
+    expect(analysis.exports.size).toBe(0);
+    expect(analysis.localSymbols.size).toBe(0);
+  });
+
+  it("does not export a modified class nested inside another class body", () => {
+    const text = `class Outer {
+  final class Inner {}
+}`;
+    const analysis = adapter.analyze("lib/nested.dart", text);
+    expect(analysis.exports.has("Outer")).toBe(true);
+    expect(analysis.localSymbols.has("Inner")).toBe(false);
+    expect(analysis.exports.has("Inner")).toBe(false);
+  });
+
+  it("puts a private modified class in localSymbols but not exports", () => {
+    const text = `final class _PrivateFinal {}`;
+    const analysis = adapter.analyze("lib/private_final.dart", text);
+    expect(analysis.localSymbols.has("_PrivateFinal")).toBe(true);
+    expect(analysis.exports.has("_PrivateFinal")).toBe(false);
+  });
+
   it("does not invoke an external dart binary via subprocess", () => {
     const source = readFileSync(new URL("./dart.ts", import.meta.url), "utf8");
     expect(source).not.toMatch(/\bspawnSync\b/);

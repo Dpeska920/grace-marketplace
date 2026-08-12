@@ -17,6 +17,37 @@ describe("PythonAdapter", () => {
     expect(adapter.supports("module.ts")).toBe(false);
   });
 
+  test.skipIf(!hasPython)("includes a private top-level symbol in localSymbols but not in exports", () => {
+    const result = adapter.analyze(
+      "module.py",
+      `def _private_helper():\n    return 1\n\n\ndef public_helper():\n    return _private_helper()\n`,
+    );
+    expect(result.localSymbols.has("_private_helper")).toBe(true);
+    expect(result.exports.has("_private_helper")).toBe(false);
+    expect(result.exports.has("public_helper")).toBe(true);
+  });
+
+  test.skipIf(!hasPython)("localSymbols is a superset of exports", () => {
+    const result = adapter.analyze(
+      "module.py",
+      `_INTERNAL = 1\nPUBLIC = 2\n\n\nclass _Hidden:\n    pass\n\n\nclass Visible:\n    pass\n`,
+    );
+    for (const name of result.exports) {
+      expect(result.localSymbols.has(name)).toBe(true);
+    }
+    expect(result.localSymbols.has("_INTERNAL")).toBe(true);
+    expect(result.localSymbols.has("_Hidden")).toBe(true);
+  });
+
+  test.skipIf(!hasPython)("does not leak a nested function into top-level localSymbols", () => {
+    const result = adapter.analyze(
+      "module.py",
+      `def outer():\n    def nested_inner():\n        return 1\n    return nested_inner()\n`,
+    );
+    expect(result.localSymbols.has("outer")).toBe(true);
+    expect(result.localSymbols.has("nested_inner")).toBe(false);
+  });
+
   test.skipIf(!hasPython)("decodes Bun stdin as UTF-8 even when Python is configured for a legacy locale", () => {
     const previousEncoding = process.env.PYTHONIOENCODING;
     process.env.PYTHONIOENCODING = "cp1251";

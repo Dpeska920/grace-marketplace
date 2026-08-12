@@ -320,10 +320,34 @@ class Second
     expect(analysis.exports.has("firstOf")).toBe(true);
   });
 
-  it("populates localSymbols to mirror the heuristic public-surface export set", () => {
+  it("includes a private top-level declaration in localSymbols but not in exports", () => {
     const text = `class Repo\nprivate class Hidden`;
     const analysis = adapter.analyze("src/Repo.kt", text);
     expect(analysis.localSymbols.has("Repo")).toBe(true);
-    expect(analysis.localSymbols.has("Hidden")).toBe(false);
+    expect(analysis.localSymbols.has("Hidden")).toBe(true);
+    expect(analysis.exports.has("Hidden")).toBe(false);
+  });
+
+  it("localSymbols is a superset of exports", () => {
+    const text = `
+class Repo {}
+internal fun internalHelper() {}
+protected val protectedField = 1
+`;
+    const analysis = adapter.analyze("src/Repo.kt", text);
+    for (const name of analysis.exports) {
+      expect(analysis.localSymbols.has(name)).toBe(true);
+    }
+    expect(analysis.localSymbols.has("internalHelper")).toBe(true);
+    expect(analysis.localSymbols.has("protectedField")).toBe(true);
+  });
+
+  it("does not leak nested class members into top-level localSymbols", () => {
+    const text = `class Outer {
+  fun innerMethod() {}
+}`;
+    const analysis = adapter.analyze("src/Outer.kt", text);
+    expect(analysis.localSymbols.has("Outer")).toBe(true);
+    expect(analysis.localSymbols.has("innerMethod")).toBe(false);
   });
 });

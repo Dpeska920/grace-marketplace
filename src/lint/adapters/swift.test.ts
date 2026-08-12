@@ -215,10 +215,39 @@ class NetworkTests: XCTestCase {
     expect(analysis.exports.has("Array")).toBe(false);
   });
 
-  it("populates localSymbols to mirror the heuristic public-surface export set", () => {
+  it("includes an internal-visibility top-level declaration in localSymbols but not in exports", () => {
     const text = `public class Visible {}\nclass Hidden {}`;
     const analysis = adapter.analyze("Sources/Mix.swift", text);
     expect(analysis.localSymbols.has("Visible")).toBe(true);
-    expect(analysis.localSymbols.has("Hidden")).toBe(false);
+    expect(analysis.localSymbols.has("Hidden")).toBe(true);
+    expect(analysis.exports.has("Hidden")).toBe(false);
+  });
+
+  it("localSymbols is a superset of exports", () => {
+    const text = `
+public class Visible {}
+private class PrivateHidden {}
+fileprivate struct FPHidden {}
+class InternalHidden {}
+`;
+    const analysis = adapter.analyze("Sources/Mix2.swift", text);
+    for (const name of analysis.exports) {
+      expect(analysis.localSymbols.has(name)).toBe(true);
+    }
+    expect(analysis.localSymbols.has("PrivateHidden")).toBe(true);
+    expect(analysis.localSymbols.has("FPHidden")).toBe(true);
+    expect(analysis.localSymbols.has("InternalHidden")).toBe(true);
+  });
+
+  it("does not leak a member of a private (non-extension) type into top-level localSymbols", () => {
+    const text = `
+private struct Outer {
+  public var leak: Int = 0
+}
+public struct Visible {}
+`;
+    const analysis = adapter.analyze("Sources/Nested.swift", text);
+    expect(analysis.localSymbols.has("Visible")).toBe(true);
+    expect(analysis.localSymbols.has("leak")).toBe(false);
   });
 });

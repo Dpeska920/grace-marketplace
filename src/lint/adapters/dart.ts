@@ -10,13 +10,13 @@
 // END_MODULE_MAP
 //
 // START_CHANGE_SUMMARY
-//   LAST_CHANGE: [replace external dart-run subprocess adapter with in-process fork regex/depth-gated heuristic]
+//   LAST_CHANGE: [separate localSymbols (all top-level declarations) from exports (public-only, non-underscore)]
 // END_CHANGE_SUMMARY
 
-// Ported from the fork/v3 adapter. Everything the regex extraction finds is
-// already top-level, non-private surface (private starts with `_`), so
-// localSymbols mirrors exports — same heuristic choice as the kotlin and
-// swift adapters.
+// Ported from the fork/v3 adapter. localSymbols captures every top-level
+// declaration the regex extraction finds, regardless of visibility (private
+// starts with `_`); exports keeps only the non-private subset. localSymbols
+// is always a superset of exports.
 //
 // No external dart binary invocation: analysis runs fully in-process against
 // the source text, eliminating the prior subprocess-spawn invocation surface.
@@ -31,10 +31,37 @@ const DART_EXTENSIONS = new Set([".dart"]);
 const TEST_IMPORT_RE = /import\s+['"]package:(test|flutter_test)\//;
 const TEST_CALL_RE = /\b(test|group|testWidgets)\s*\(/;
 
-// Matches top-level declarations that are NOT private (not starting with _).
-// Captures: class, mixin, enum, extension, typedef.
+// Matches top-level declarations, public or private (private starts with `_`).
+// Captures: class (with Dart 3 modifiers), mixin, enum, extension, extension type,
+// typedef. Visibility is decided by the caller (recordDeclaration), not by this regex.
+//
+// Six alternatives, tried in order, each with its own capture group (only one group is
+// ever populated per match — see matchTopLevelDeclName):
+//   1. class, with the fixed-order Dart 3 modifier prefix:
+//      abstract? (base|interface|final|sealed)? mixin? class Name
+//      Covers plain `class`, `abstract class`, `base/final/interface/sealed class`,
+//      `abstract base/final/interface class`, and `mixin class` (a class declaration,
+//      name follows `class` not `mixin`).
+//   2. mixin declaration (not `mixin class`): base? mixin Name
+//   3. enum Name
+//   4. extension type (Dart 3.3), tried before the bare `extension` alternative so
+//      `type` is never mistaken for the extension's name: extension type const? Name
+//   5. bare extension: extension Name — negative lookahead excludes `on`, since
+//      `extension on Type {}` (unnamed extension) declares no symbol.
+//   6. typedef Name
 const TOP_LEVEL_DECL_RE =
-  /^(?:abstract\s+)?(?:class|mixin|enum|extension|typedef)\s+([A-Za-z][A-Za-z0-9_]*)/;
+  /^(?:abstract\s+)?(?:(?:base|interface|final|sealed)\s+)?(?:mixin\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)|^(?:base\s+)?mixin\s+([A-Za-z_][A-Za-z0-9_]*)|^enum\s+([A-Za-z_][A-Za-z0-9_]*)|^extension\s+type\s+(?:const\s+)?([A-Za-z_][A-Za-z0-9_]*)|^extension\s+(?!on\b)([A-Za-z_][A-Za-z0-9_]*)|^typedef\s+([A-Za-z_][A-Za-z0-9_]*)/;
+
+// Returns the captured declaration name from TOP_LEVEL_DECL_RE, whichever of its six
+// alternatives matched (only one capture group is populated per match).
+function matchTopLevelDeclName(line: string): string | null {
+  const m = TOP_LEVEL_DECL_RE.exec(line);
+  if (!m) return null;
+  for (let i = 1; i < m.length; i++) {
+    if (m[i] !== undefined) return m[i];
+  }
+  return null;
+}
 
 // Top-level function/constructor declaration: requires an explicit return-type token before the name.
 // The prefix (return type) is REQUIRED (no ?) to distinguish declarations from bare call expressions.
@@ -43,19 +70,19 @@ const TOP_LEVEL_DECL_RE =
 // Examples that do NOT match: "mySideEffect(" (no return-type prefix before the name).
 // For rare legacy top-level functions that omit the return type, the body-indicator fallback
 // (TOP_LEVEL_FUNC_BODY_RE) catches declarations with a `{` or `=>` body marker on the same line.
-const TOP_LEVEL_FUNC_RE = /^([\w<>\[\]?,\s]+)\s+([A-Za-z][A-Za-z0-9_]*)\s*\(/;
+const TOP_LEVEL_FUNC_RE = /^([\w<>\[\]?,\s]+)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
 
 // Fallback for omitted-return-type declarations: requires a body indicator on the same line.
 // Matches: "name(...) {", "name(...) =>", "name(...) async", "name(...) sync*".
 // Does NOT match bare calls: "name();" or "name(arg);" which have no body.
-const TOP_LEVEL_FUNC_BODY_RE = /^([A-Za-z][A-Za-z0-9_]*)\s*\(.*\)\s*(async|sync\*|{|=>)/;
+const TOP_LEVEL_FUNC_BODY_RE = /^([A-Za-z_][A-Za-z0-9_]*)\s*\(.*\)\s*(async|sync\*|{|=>)/;
 
 const TOP_LEVEL_VAR_RE =
-  /^(?:final|const|var|late\s+final|late\s+var)\s+(?:[\w<>\[\]?,\s]*?\s+)?([A-Za-z][A-Za-z0-9_]*)\s*[=;]/;
+  /^(?:final|const|var|late\s+final|late\s+var)\s+(?:[\w<>\[\]?,\s]*?\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*[=;]/;
 
 // Top-level getter: "<type> get <name>" at depth 0.
 // Examples: "int get answer =>", "List<String> get names =>", "String get id {"
-const TOP_LEVEL_GETTER_RE = /^[\w<>\[\]?,\s]+\s+get\s+([A-Za-z][A-Za-z0-9_]*)\s*[({=>]/;
+const TOP_LEVEL_GETTER_RE = /^[\w<>\[\]?,\s]+\s+get\s+([A-Za-z_][A-Za-z0-9_]*)\s*[({=>]/;
 
 // export directive: "export 'path';" or "export 'path' show A, B;" or "export 'path' hide ...;"
 const EXPORT_DIRECTIVE_RE = /^export\s+['"][^'"]+['"]\s*(show\s+([^;]+?)\s*;|hide\s+[^;]+;|;)/;
@@ -108,12 +135,23 @@ function isTestFile(filePath: string, text: string) {
 
 interface ExtractionResult {
   exports: Set<string>;
+  localSymbols: Set<string>;
   hasWildcardReExport: boolean;
   directReExportCount: number;
 }
 
+// Records `name` in localSymbols always, and in exports only when it is not
+// private (does not start with `_`).
+function recordDeclaration(exports: Set<string>, localSymbols: Set<string>, name: string) {
+  localSymbols.add(name);
+  if (!name.startsWith("_")) {
+    exports.add(name);
+  }
+}
+
 function extractDartExports(text: string): ExtractionResult {
   const exports = new Set<string>();
+  const localSymbols = new Set<string>();
   let hasWildcardReExport = false;
   let directReExportCount = 0;
 
@@ -145,6 +183,9 @@ function extractDartExports(text: string): ExtractionResult {
           for (const name of result.namedExports) {
             if (name && !name.startsWith("_")) {
               exports.add(name);
+              // Re-exported names have no local declaration in this file, but
+              // localSymbols must stay a superset of exports.
+              localSymbols.add(name);
             }
           }
           directReExportCount++;
@@ -158,21 +199,15 @@ function extractDartExports(text: string): ExtractionResult {
       continue;
     }
 
-    const declMatch = TOP_LEVEL_DECL_RE.exec(line);
-    if (declMatch) {
-      const name = declMatch[1];
-      if (!name.startsWith("_")) {
-        exports.add(name);
-      }
+    const declName = matchTopLevelDeclName(line);
+    if (declName) {
+      recordDeclaration(exports, localSymbols, declName);
       continue;
     }
 
     const varMatch = TOP_LEVEL_VAR_RE.exec(line);
     if (varMatch) {
-      const name = varMatch[1];
-      if (!name.startsWith("_")) {
-        exports.add(name);
-      }
+      recordDeclaration(exports, localSymbols, varMatch[1]);
       continue;
     }
 
@@ -182,8 +217,8 @@ function extractDartExports(text: string): ExtractionResult {
       const getterMatch = TOP_LEVEL_GETTER_RE.exec(line);
       if (getterMatch) {
         const name = getterMatch[1];
-        if (!name.startsWith("_") && !DART_KEYWORD_GUARD.has(name)) {
-          exports.add(name);
+        if (!DART_KEYWORD_GUARD.has(name)) {
+          recordDeclaration(exports, localSymbols, name);
         }
         continue;
       }
@@ -193,8 +228,8 @@ function extractDartExports(text: string): ExtractionResult {
     const funcMatch = TOP_LEVEL_FUNC_RE.exec(line);
     if (funcMatch) {
       const name = funcMatch[2];
-      if (!name.startsWith("_") && !DART_KEYWORD_GUARD.has(name)) {
-        exports.add(name);
+      if (!DART_KEYWORD_GUARD.has(name)) {
+        recordDeclaration(exports, localSymbols, name);
       }
       continue;
     }
@@ -203,13 +238,13 @@ function extractDartExports(text: string): ExtractionResult {
     const bodyMatch = TOP_LEVEL_FUNC_BODY_RE.exec(line);
     if (bodyMatch) {
       const name = bodyMatch[1];
-      if (!name.startsWith("_") && !DART_KEYWORD_GUARD.has(name)) {
-        exports.add(name);
+      if (!DART_KEYWORD_GUARD.has(name)) {
+        recordDeclaration(exports, localSymbols, name);
       }
     }
   }
 
-  return { exports, hasWildcardReExport, directReExportCount };
+  return { exports, localSymbols, hasWildcardReExport, directReExportCount };
 }
 
 export function createDartAdapter(): LanguageAdapter {
@@ -219,7 +254,7 @@ export function createDartAdapter(): LanguageAdapter {
       return DART_EXTENSIONS.has(path.extname(filePath));
     },
     analyze(filePath, text) {
-      const { exports, hasWildcardReExport, directReExportCount } = extractDartExports(text);
+      const { exports, localSymbols, hasWildcardReExport, directReExportCount } = extractDartExports(text);
       const usesTestFramework = isTestFile(filePath, text);
 
       const analysis: LanguageAnalysis = {
@@ -227,7 +262,7 @@ export function createDartAdapter(): LanguageAdapter {
         exports,
         valueExports: new Set(exports),
         typeExports: new Set<string>(),
-        localSymbols: new Set(exports),
+        localSymbols,
         exportConfidence: "heuristic",
         hasDefaultExport: false,
         hasWildcardReExport,

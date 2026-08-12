@@ -1,11 +1,11 @@
 // Language adapter for Kotlin (.kt) and Kotlin Script (.kts) files.
 // Heuristic export analysis via regex; test-role and script-role detection.
 //
-// Ported from the fork/v3 adapter. The regex extraction only ever matches
-// top-level declarations that are NOT explicitly private/internal/protected, so
-// what it finds is already "public surface" — localSymbols mirrors exports
-// (same heuristic choice as the dart adapter) rather than tracking a separate
-// private-symbol set the regex has no reliable way to enumerate.
+// Ported from the fork/v3 adapter. localSymbols captures every top-level
+// declaration the regex extraction finds, including ones marked
+// private/internal/protected; exports keeps only the public subset (default
+// visibility, or an explicit `public` modifier). localSymbols is always a
+// superset of exports.
 
 import path from "node:path";
 
@@ -104,12 +104,14 @@ type KotlinExportSets = {
   exports: Set<string>;
   valueExports: Set<string>;
   typeExports: Set<string>;
+  localSymbols: Set<string>;
 };
 
 function extractKotlinExports(text: string): KotlinExportSets {
   const exports = new Set<string>();
   const valueExports = new Set<string>();
   const typeExports = new Set<string>();
+  const localSymbols = new Set<string>();
   const lines = text.split("\n");
   const lineDepths = buildLineDepths(text);
 
@@ -138,15 +140,19 @@ function extractKotlinExports(text: string): KotlinExportSets {
 
     // BUG-1 fix: check visibility modifier only at the head of the effective declaration.
     // Use effectiveLine (annotations stripped) so @private class X is not misread.
-    if (LEADING_PRIVATE_RE.test(effectiveLine)) {
-      continue;
-    }
+    // private/internal/protected declarations still land in localSymbols below —
+    // this only gates whether the name is also treated as public exported surface.
+    const isRestrictedVisibility = LEADING_PRIVATE_RE.test(effectiveLine);
 
     const match = DECL_RE.exec(effectiveLine);
     if (match) {
       const keyword = match[1]!; // e.g. "interface", "class", "fun", "typealias", "enum class"
       const name = match[2];
       if (name) {
+        localSymbols.add(name);
+        if (isRestrictedVisibility) {
+          continue;
+        }
         exports.add(name);
         // Classify: interface, typealias, sealed interface → TYPE
         // annotation class → TYPE (annotation modifier + class keyword)
@@ -163,7 +169,7 @@ function extractKotlinExports(text: string): KotlinExportSets {
     }
   }
 
-  return { exports, valueExports, typeExports };
+  return { exports, valueExports, typeExports, localSymbols };
 }
 
 function isTestFile(text: string): boolean {
@@ -184,7 +190,7 @@ export function createKotlinAdapter(): LanguageAdapter {
       return KOTLIN_EXTENSIONS.has(path.extname(filePath));
     },
     analyze(filePath, text) {
-      const { exports, valueExports, typeExports } = extractKotlinExports(text);
+      const { exports, valueExports, typeExports, localSymbols } = extractKotlinExports(text);
       const usesTestFramework = isTestFile(text);
       const hasMainEntrypoint = isScriptOrMain(filePath, text);
 
@@ -193,7 +199,7 @@ export function createKotlinAdapter(): LanguageAdapter {
         exports,
         valueExports,
         typeExports,
-        localSymbols: new Set(exports),
+        localSymbols,
         exportConfidence: "heuristic",
         hasDefaultExport: false,
         hasWildcardReExport: false,

@@ -64,6 +64,7 @@ def imported_name(alias):
 
 
 local_public = set()
+local_all = set()
 imported_public = set()
 explicit_all = None
 has_wildcard_reexport = False
@@ -111,6 +112,7 @@ for node in tree.body:
         local_implementation_count += 1
         if node.name.startswith("test_"):
             uses_test_framework = True
+        local_all.add(node.name)
         if is_public(node.name):
             local_public.add(node.name)
         continue
@@ -119,6 +121,7 @@ for node in tree.body:
         local_implementation_count += 1
         if node.name.startswith("Test"):
             uses_test_framework = True
+        local_all.add(node.name)
         if is_public(node.name):
             local_public.add(node.name)
         continue
@@ -131,6 +134,7 @@ for node in tree.body:
                     if sequence is not None:
                         explicit_all = sequence
                     continue
+                local_all.add(name)
                 if is_public(name):
                     local_public.add(name)
                     local_implementation_count += 1
@@ -143,6 +147,7 @@ for node in tree.body:
                 if sequence is not None:
                     explicit_all = sequence
                 continue
+            local_all.add(name)
             if is_public(name):
                 local_public.add(name)
                 local_implementation_count += 1
@@ -167,7 +172,7 @@ print(json.dumps({
     "exports": export_names,
     "valueExports": export_names,
     "typeExports": [],
-    "localSymbols": sorted(local_public),
+    "localSymbols": sorted(local_all),
     "exportConfidence": export_confidence,
     "hasDefaultExport": False,
     "hasWildcardReExport": has_wildcard_reexport,

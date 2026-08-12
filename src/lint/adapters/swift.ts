@@ -1,10 +1,12 @@
 // Language adapter for Swift source files.
 // Heuristic export analysis for public/open declarations; test-role detection.
 //
-// Ported from the fork/v3 adapter. Everything the regex extraction finds is
-// already gated behind an explicit public/open modifier (or inherited from a
-// `public extension` block), so localSymbols mirrors exports — same heuristic
-// choice as the kotlin and dart adapters.
+// Ported from the fork/v3 adapter. localSymbols captures every top-level
+// declaration the regex extraction finds regardless of access level
+// (default `internal`, explicit `private`/`fileprivate`/`internal`, or
+// `public`/`open`); exports keeps only the declarations gated behind an
+// explicit `public`/`open` modifier (or inherited from a `public`/`open`
+// extension block). localSymbols is always a superset of exports.
 
 import path from "node:path";
 
@@ -14,55 +16,56 @@ import { buildLineDepths } from "./source-scan";
 const SWIFT_EXTENSIONS = new Set([".swift"]);
 
 // Modifier set shared between leading and trailing modifier groups.
+// Includes the bare `private`/`fileprivate`/`internal` access keywords too, so
+// the declaration regexes below match a declaration regardless of its access
+// level — visibility is decided afterwards by inspecting the captured
+// modifiers text, not by gating the regex match itself.
 const MOD =
-  "public|open|final|static|class|override|mutating|nonmutating|required|convenience|lazy|weak|unowned|dynamic|private\\(set\\)|fileprivate\\(set\\)|internal\\(set\\)|@objc|@objcMembers|@discardableResult|@inlinable";
+  "public|open|private|fileprivate|internal|final|static|class|override|mutating|nonmutating|required|convenience|lazy|weak|unowned|dynamic|private\\(set\\)|fileprivate\\(set\\)|internal\\(set\\)|@objc|@objcMembers|@discardableResult|@inlinable";
 
-// PUBLIC_DECL_RE: matches a public/open declaration at the start of a (stripped) line.
-//   Group 1 — the declaration keyword
-//   Group 2 — the identifier/operator name (may be absent for init/subscript)
+// ALL_DECL_RE: matches a top-level declaration at the start of a (stripped) line,
+// regardless of access level.
+//   Group 1 — the full leading modifiers text (used to test for public/open)
+//   Group 2 — the declaration keyword
+//   Group 3 — the identifier/operator name (may be absent for init/subscript)
 //
 // Keywords with no following name (init, subscript): name group is optional; callers
-// emit a synthetic stable name when group 2 is absent.
+// emit a synthetic stable name when group 3 is absent.
 //
 // Operator functions: after `func` the name may be an operator token instead of an
 // identifier. We accept operator-chars sequences like `+`, `==`, `<=`, `??`, etc.
 //
 // extension: captured but the caller skips the type-name export and instead tracks
-// the block to extract its directly-declared public members.
-const PUBLIC_DECL_RE = new RegExp(
-  // Leading optional modifiers
-  `^(?:(?:${MOD})\\s+)*` +
-  // Required public|open (the visibility gate)
-  `(?:public|open)\\s+` +
-  // Optional trailing modifiers (e.g. `public static func`)
-  `(?:(?:${MOD})\\s+)*` +
-  // Keyword — captured in group 1
+// the block to extract its directly-declared members.
+const ALL_DECL_RE = new RegExp(
+  // Leading modifiers, captured so callers can test for public/open.
+  `^((?:(?:${MOD})\\s+)*)` +
+  // Keyword — captured in group 2
   `(class|struct|enum|protocol|func|let|var|extension|actor|typealias|init|subscript)` +
   // Optional `?` for init? or generic param `<...>` for subscript — non-capturing, ignored
   `[?<]?\\s*` +
-  // Name — captured in group 2. Either:
+  // Name — captured in group 3. Either:
   //   - standard identifier: [A-Za-z_][A-Za-z0-9_]*
   //   - operator token: one or more of + - * / % = < > ! & | ^ ~ ? . (Swift operator chars)
   //     (space-separated operator like `func + ` — the \\s* above already consumed leading space)
   `([A-Za-z_][A-Za-z0-9_]*|[+\\-*/%=<>!&|^~?]+|[.](?:[.]{1,2})?)?`
 );
 
-// Regex for detecting a public member declaration INSIDE a public extension block (depth 1).
-// Matches lines that are either:
-//   - explicitly `public …` (inherits public), or
-//   - a bare declaration with no explicit access modifier (inherits extension access level).
-// Group 1 — keyword, Group 2 — name (optional for init/subscript).
-const EXT_MEMBER_RE = new RegExp(
-  // Optional leading modifiers (final, static, override, etc.) — but NOT a private/fileprivate/internal access gate.
-  // We only match lines that don't start with an explicit restricting access modifier.
-  `^(?!(?:private|fileprivate|internal)\\b)` +
-  `(?:(?:${MOD})\\s+)*` +
+// Regex for detecting a member declaration INSIDE an extension block (depth 1),
+// regardless of access level. Group 1 — modifiers, Group 2 — keyword, Group 3 — name.
+const ALL_EXT_MEMBER_RE = new RegExp(
+  `^((?:(?:${MOD})\\s+)*)` +
   // Keyword
   `(func|var|let|init|subscript|typealias|class|struct|enum|actor|protocol)` +
   `[?<]?\\s*` +
   // Name
   `([A-Za-z_][A-Za-z0-9_]*|[+\\-*/%=<>!&|^~?]+|[.](?:[.]{1,2})?)?`
 );
+
+const PUBLIC_MODIFIER_RE = /\b(?:public|open)\b/;
+// Negative lookahead excludes the accessor-level `private(set)` / `fileprivate(set)` /
+// `internal(set)` modifiers, which restrict only the setter, not the declaration itself.
+const RESTRICTED_MODIFIER_RE = /\b(?:private|fileprivate|internal)\b(?!\()/;
 
 const TEST_IMPORT_RE = /import\s+(XCTest|Testing)\b/;
 const XCTEST_INHERIT_RE = /:\s*XCTestCase\b/;
@@ -137,18 +140,22 @@ type SwiftExportSets = {
   exports: Set<string>;
   valueExports: Set<string>;
   typeExports: Set<string>;
+  localSymbols: Set<string>;
 };
 
 function extractSwiftPublicExports(text: string): SwiftExportSets {
   const exports = new Set<string>();
   const valueExports = new Set<string>();
   const typeExports = new Set<string>();
+  const localSymbols = new Set<string>();
   const lines = text.split("\n");
   const lineDepths = buildLineDepths(text);
 
-  // Track whether we are currently inside a `public extension` block.
-  // When true, members at depth 1 (directly inside the block) are harvested
-  // as public exports (they inherit the extension's access level).
+  // Track whether we are currently inside an extension block (any access level).
+  // Members at depth 1 (directly inside the block) are always harvested into
+  // localSymbols; they are also harvested into exports when the extension
+  // itself is public/open (they inherit the extension's access level) and the
+  // member has no explicit restricting access modifier of its own.
   // The block closes when depth returns to 0.
   //
   // KNOWN LIMITATION (single-line extension): a declaration of the form
@@ -156,10 +163,11 @@ function extractSwiftPublicExports(text: string): SwiftExportSets {
   // on a single line will NOT have its members harvested. The inside-extension
   // tracking relies on `buildLineDepths` returning depth 0 on a *later* line to
   // signal exit; when the entire block sits on one line, the depth never returns
-  // to 0 on a subsequent line so `insidePublicExtension` is set but immediately
+  // to 0 on a subsequent line so `insideExtension` is set but immediately
   // cleared by the next depth-0 line (or end-of-file). This is a known heuristic
   // trade-off — single-line multi-member extensions are rare in production code.
-  let insidePublicExtension = false;
+  let insideExtension = false;
+  let extensionIsPublic = false;
 
   for (let idx = 0; idx < lines.length; idx++) {
     const depthAtLineStart = lineDepths[idx] ?? 0;
@@ -170,8 +178,8 @@ function extractSwiftPublicExports(text: string): SwiftExportSets {
     }
 
     // When depth drops back to 0 we have left the extension block.
-    if (insidePublicExtension && depthAtLineStart === 0) {
-      insidePublicExtension = false;
+    if (insideExtension && depthAtLineStart === 0) {
+      insideExtension = false;
     }
 
     // FIX-B: strip leading same-line annotations.
@@ -180,20 +188,25 @@ function extractSwiftPublicExports(text: string): SwiftExportSets {
       continue;
     }
 
-    if (insidePublicExtension) {
+    if (insideExtension) {
       // Only harvest direct members (depth 1 = one brace level inside extension).
       if (depthAtLineStart !== 1) {
         continue;
       }
-      const memberMatch = EXT_MEMBER_RE.exec(stripped);
+      const memberMatch = ALL_EXT_MEMBER_RE.exec(stripped);
       if (memberMatch) {
-        const kw = memberMatch[1]!;
-        const name = memberMatch[2] ?? SYNTHETIC[kw];
+        const modifiers = memberMatch[1] ?? "";
+        const kw = memberMatch[2]!;
+        const name = memberMatch[3] ?? SYNTHETIC[kw];
         if (name) {
-          exports.add(name);
-          // Extension members (func/var/let/init/subscript inside an extension block)
-          // are always value-like (methods/properties), not type declarations.
-          valueExports.add(name);
+          localSymbols.add(name);
+          const isRestricted = RESTRICTED_MODIFIER_RE.test(modifiers);
+          if (extensionIsPublic && !isRestricted) {
+            exports.add(name);
+            // Extension members (func/var/let/init/subscript inside an extension block)
+            // are always value-like (methods/properties), not type declarations.
+            valueExports.add(name);
+          }
         }
       }
       continue;
@@ -204,23 +217,30 @@ function extractSwiftPublicExports(text: string): SwiftExportSets {
       continue;
     }
 
-    const match = PUBLIC_DECL_RE.exec(stripped);
+    const match = ALL_DECL_RE.exec(stripped);
     if (!match) {
       continue;
     }
 
-    const kw = match[1]!;
-    const name = match[2] ?? SYNTHETIC[kw];
+    const modifiers = match[1] ?? "";
+    const kw = match[2]!;
+    const name = match[3] ?? SYNTHETIC[kw];
+    const isPublic = PUBLIC_MODIFIER_RE.test(modifiers);
 
     if (kw === "extension") {
-      // Do NOT emit the extended type name as an export.
+      // Do NOT emit the extended type name as an export or local symbol.
       // Enter extension mode to harvest members at depth 1.
       // exportConfidence stays heuristic — member extraction is heuristic.
-      insidePublicExtension = true;
+      insideExtension = true;
+      extensionIsPublic = isPublic;
       continue;
     }
 
     if (name) {
+      localSymbols.add(name);
+      if (!isPublic) {
+        continue;
+      }
       exports.add(name);
       // Classify: protocol, typealias → TYPE; everything else → VALUE
       if (SWIFT_TYPE_KEYWORDS.has(kw)) {
@@ -231,7 +251,7 @@ function extractSwiftPublicExports(text: string): SwiftExportSets {
     }
   }
 
-  return { exports, valueExports, typeExports };
+  return { exports, valueExports, typeExports, localSymbols };
 }
 
 // FIX-C: bare `func test*` naming is insufficient for test-framework detection.
@@ -255,7 +275,7 @@ export function createSwiftAdapter(): LanguageAdapter {
       return SWIFT_EXTENSIONS.has(path.extname(filePath));
     },
     analyze(_filePath, text) {
-      const { exports, valueExports, typeExports } = extractSwiftPublicExports(text);
+      const { exports, valueExports, typeExports, localSymbols } = extractSwiftPublicExports(text);
       const usesTestFramework = isTestFile(text);
 
       const analysis: LanguageAnalysis = {
@@ -263,7 +283,7 @@ export function createSwiftAdapter(): LanguageAdapter {
         exports,
         valueExports,
         typeExports,
-        localSymbols: new Set(exports),
+        localSymbols,
         exportConfidence: "heuristic",
         hasDefaultExport: false,
         hasWildcardReExport: false,
