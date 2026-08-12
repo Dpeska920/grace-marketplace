@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 import { loadGraceLintConfig } from "../lint/config";
+import { isLikelyTestPath } from "../project-utils";
 import type {
   FileBlockRecord,
   FileContractRecord,
@@ -51,10 +52,13 @@ const CODE_EXTENSIONS = new Set([
   ".go",
   ".java",
   ".kt",
+  ".kts",
   ".rs",
   ".rb",
   ".php",
   ".swift",
+  ".dart",
+  ".vue",
   ".scala",
   ".sql",
   ".sh",
@@ -591,7 +595,8 @@ export function getModuleVerificationIds(moduleRecord: ModuleRecord) {
 }
 
 export function getModuleImplementationFiles(moduleRecord: ModuleRecord) {
-  return moduleRecord.localFiles.filter((file) => !/(^|\/)(__tests__|tests)(\/|$)|(^|\/)(test_[^/]+|[^/]+\.(test|spec)\.[^.]+)$/.test(file.path));
+  // isLikelyTestPath — imported from project-utils (canonical shared helper).
+  return moduleRecord.localFiles.filter((file) => !isLikelyTestPath(file.path));
 }
 
 export function loadGraceArtifactIndex(projectRoot: string): GraceArtifactIndex {

@@ -392,3 +392,169 @@ describe("grace query core", () => {
     expect(Buffer.from(healthResult.stdout).toString("utf8")).toContain("State: ready");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 2 — getModuleImplementationFiles test-path parity with lint/core.ts
+// ---------------------------------------------------------------------------
+describe("getModuleImplementationFiles — test-path classification parity", () => {
+  it("lib/core/test_keys.dart is NOT excluded as a test file", () => {
+    // Build a minimal ModuleRecord with localFiles including the runtime file.
+    // We use the exported function directly to isolate the regex logic.
+    const { getModuleImplementationFiles } = require("./query/core");
+
+    const fakeRecord = {
+      id: "M-EXAMPLE",
+      localFiles: [
+        { path: "lib/core/test_keys.dart", linkedModuleIds: ["M-EXAMPLE"], moduleMap: [], contracts: [], blocks: [] },
+        { path: "test/example_test.dart", linkedModuleIds: ["M-EXAMPLE"], moduleMap: [], contracts: [], blocks: [] },
+      ],
+    } as any;
+
+    const implFiles = getModuleImplementationFiles(fakeRecord);
+    const paths = implFiles.map((f: any) => f.path);
+
+    expect(paths).toContain("lib/core/test_keys.dart");
+    expect(paths).not.toContain("test/example_test.dart");
+  });
+
+  it("test/test_helpers.dart IS excluded as a test file (test/ ancestor)", () => {
+    const { getModuleImplementationFiles } = require("./query/core");
+
+    const fakeRecord = {
+      id: "M-EXAMPLE",
+      localFiles: [
+        { path: "test/test_helpers.dart", linkedModuleIds: ["M-EXAMPLE"], moduleMap: [], contracts: [], blocks: [] },
+        { path: "lib/runtime.dart", linkedModuleIds: ["M-EXAMPLE"], moduleMap: [], contracts: [], blocks: [] },
+      ],
+    } as any;
+
+    const implFiles = getModuleImplementationFiles(fakeRecord);
+    const paths = implFiles.map((f: any) => f.path);
+
+    expect(paths).not.toContain("test/test_helpers.dart");
+    expect(paths).toContain("lib/runtime.dart");
+  });
+
+  it("src/x.test.ts IS excluded (unambiguous .test. suffix)", () => {
+    const { getModuleImplementationFiles } = require("./query/core");
+
+    const fakeRecord = {
+      id: "M-EXAMPLE",
+      localFiles: [
+        { path: "src/x.test.ts", linkedModuleIds: ["M-EXAMPLE"], moduleMap: [], contracts: [], blocks: [] },
+        { path: "src/x.ts", linkedModuleIds: ["M-EXAMPLE"], moduleMap: [], contracts: [], blocks: [] },
+      ],
+    } as any;
+
+    const implFiles = getModuleImplementationFiles(fakeRecord);
+    const paths = implFiles.map((f: any) => f.path);
+
+    expect(paths).not.toContain("src/x.test.ts");
+    expect(paths).toContain("src/x.ts");
+  });
+
+  it("lint and query agree: lib/core/test_keys.dart is runtime in both", () => {
+    // Verifies no divergence between lint/core.ts isLikelyTestPath
+    // and query/core.ts getModuleImplementationFiles.
+    const { getModuleImplementationFiles } = require("./query/core");
+
+    const testCases: Array<[string, boolean]> = [
+      ["lib/core/test_keys.dart", false],      // runtime — must NOT be excluded (Dart fix preserved)
+      ["test/test_helpers.dart", true],         // test/ ancestor — must be excluded
+      ["test/foo_test.dart", true],             // _test.dart suffix — excluded
+      ["src/x.test.ts", true],                  // .test. suffix — excluded
+      ["src/x.spec.ts", true],                  // .spec. suffix — excluded
+      ["src/__tests__/foo.ts", true],            // __tests__ ancestor — excluded
+      // Python conventions
+      ["src/foo/test_auth.py", true],           // test_*.py prefix — excluded
+      ["pkg/auth_test.py", true],               // *_test.py suffix — excluded
+      ["src/app.py", false],                    // plain .py runtime — must NOT be excluded
+    ];
+
+    for (const [filePath, expectExcluded] of testCases) {
+      const fakeRecord = {
+        id: "M-EXAMPLE",
+        localFiles: [
+          { path: filePath, linkedModuleIds: ["M-EXAMPLE"], moduleMap: [], contracts: [], blocks: [] },
+        ],
+      } as any;
+
+      const implFiles = getModuleImplementationFiles(fakeRecord);
+      const paths = implFiles.map((f: any) => f.path);
+
+      if (expectExcluded) {
+        expect(paths).not.toContain(filePath);
+      } else {
+        expect(paths).toContain(filePath);
+      }
+    }
+  });
+
+  it("src/foo/test_auth.py IS excluded as a test file (pytest prefix convention)", () => {
+    const { getModuleImplementationFiles } = require("./query/core");
+
+    const fakeRecord = {
+      id: "M-EXAMPLE",
+      localFiles: [
+        { path: "src/foo/test_auth.py", linkedModuleIds: ["M-EXAMPLE"], moduleMap: [], contracts: [], blocks: [] },
+        { path: "src/foo/auth.py", linkedModuleIds: ["M-EXAMPLE"], moduleMap: [], contracts: [], blocks: [] },
+      ],
+    } as any;
+
+    const implFiles = getModuleImplementationFiles(fakeRecord);
+    const paths = implFiles.map((f: any) => f.path);
+
+    expect(paths).not.toContain("src/foo/test_auth.py");
+    expect(paths).toContain("src/foo/auth.py");
+  });
+
+  it("pkg/auth_test.py IS excluded as a test file (pytest _test suffix convention)", () => {
+    const { getModuleImplementationFiles } = require("./query/core");
+
+    const fakeRecord = {
+      id: "M-EXAMPLE",
+      localFiles: [
+        { path: "pkg/auth_test.py", linkedModuleIds: ["M-EXAMPLE"], moduleMap: [], contracts: [], blocks: [] },
+        { path: "pkg/auth.py", linkedModuleIds: ["M-EXAMPLE"], moduleMap: [], contracts: [], blocks: [] },
+      ],
+    } as any;
+
+    const implFiles = getModuleImplementationFiles(fakeRecord);
+    const paths = implFiles.map((f: any) => f.path);
+
+    expect(paths).not.toContain("pkg/auth_test.py");
+    expect(paths).toContain("pkg/auth.py");
+  });
+
+  it("lib/core/test_keys.dart is NOT excluded (Dart fix preserved — no bare test_ for .dart)", () => {
+    const { getModuleImplementationFiles } = require("./query/core");
+
+    const fakeRecord = {
+      id: "M-EXAMPLE",
+      localFiles: [
+        { path: "lib/core/test_keys.dart", linkedModuleIds: ["M-EXAMPLE"], moduleMap: [], contracts: [], blocks: [] },
+      ],
+    } as any;
+
+    const implFiles = getModuleImplementationFiles(fakeRecord);
+    const paths = implFiles.map((f: any) => f.path);
+
+    expect(paths).toContain("lib/core/test_keys.dart");
+  });
+
+  it("src/app.py is NOT excluded (plain Python runtime file)", () => {
+    const { getModuleImplementationFiles } = require("./query/core");
+
+    const fakeRecord = {
+      id: "M-EXAMPLE",
+      localFiles: [
+        { path: "src/app.py", linkedModuleIds: ["M-EXAMPLE"], moduleMap: [], contracts: [], blocks: [] },
+      ],
+    } as any;
+
+    const implFiles = getModuleImplementationFiles(fakeRecord);
+    const paths = implFiles.map((f: any) => f.path);
+
+    expect(paths).toContain("src/app.py");
+  });
+});

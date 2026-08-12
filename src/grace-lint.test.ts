@@ -1004,6 +1004,37 @@ test("run", () => {
     expect(explanation).toContain("Remediation");
   });
 
+  it("counts a Dart *_test.dart file as a test file, not an implementation file", () => {
+    const root = createProject();
+    writeCurrentDocs(root);
+
+    // Only linked file for the module is a _test.dart.
+    // isLikelyTestPath must filter it out so the gate reports missing implementation.
+    writeProjectFile(
+      root,
+      "lib/example_test.dart",
+      `// START_MODULE_CONTRACT
+//   PURPOSE: Run the example flow.
+//   SCOPE: Test only.
+//   DEPENDS: none
+//   LINKS: M-EXAMPLE
+// END_MODULE_CONTRACT
+//
+// START_MODULE_MAP
+//   SUMMARY: Dart test file only.
+// END_MODULE_MAP
+//
+// START_CHANGE_SUMMARY
+//   LAST_CHANGE: [v0.1.0 - Added Dart test]
+// END_CHANGE_SUMMARY
+`,
+    );
+
+    const result = lintGraceProject(root, { profile: "autonomous" });
+    const codes = result.issues.map((issue) => issue.code);
+    expect(codes).toContain("autonomy.module-missing-implementation-files");
+  });
+
   it("supports fail-on warnings for CI-oriented lint runs", () => {
     const root = createProject();
     writeCurrentDocs(root);
@@ -1068,5 +1099,588 @@ export function run() {
 
     expect(result.exitCode).toBe(1);
     expect(Buffer.from(result.stdout).toString("utf8")).toContain("Warnings:");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Helpers shared by export-parity and test-path tests below
+// ---------------------------------------------------------------------------
+
+function writeDartBaseDocs(root: string, moduleId = "M-EXAMPLE", sourcePath = "lib/example.dart") {
+  writeProjectFile(
+    root,
+    "docs/technology.xml",
+    `<TechnologyStack VERSION="0.2.0">
+  <Runtime>dart 3.x</Runtime>
+  <Language>dart</Language>
+  <PreferredAgentStack>
+    <preferred-runtime-library>flutter</preferred-runtime-library>
+    <preferred-test-library>flutter_test</preferred-test-library>
+  </PreferredAgentStack>
+  <AutonomyPolicy>
+    <default-execution-profile>balanced</default-execution-profile>
+    <max-fix-attempts-per-step>2</max-fix-attempts-per-step>
+  </AutonomyPolicy>
+</TechnologyStack>`,
+  );
+
+  writeProjectFile(
+    root,
+    "docs/knowledge-graph.xml",
+    `<KnowledgeGraph>
+  <Project NAME="Example" VERSION="0.1.0">
+    <${moduleId} NAME="Example" TYPE="CORE_LOGIC">
+      <purpose>Example module.</purpose>
+      <path>${sourcePath}</path>
+      <depends>none</depends>
+    </${moduleId}>
+  </Project>
+</KnowledgeGraph>`,
+  );
+
+  writeProjectFile(
+    root,
+    "docs/development-plan.xml",
+    `<DevelopmentPlan VERSION="0.1.0">
+  <Modules>
+    <${moduleId} NAME="Example" TYPE="CORE_LOGIC" STATUS="planned">
+      <contract><purpose>Example module.</purpose></contract>
+    </${moduleId}>
+  </Modules>
+</DevelopmentPlan>`,
+  );
+
+  // verification-plan.xml is required by loadGraceArtifactIndex;
+  // without it the autonomy check aborts before reaching the impl-files gate.
+  writeProjectFile(
+    root,
+    "docs/verification-plan.xml",
+    `<VerificationPlan VERSION="0.1.0" />`,
+  );
+}
+
+const DART_CONTRACT_HEADER = `// START_MODULE_CONTRACT
+//   PURPOSE: Example module.
+//   SCOPE: Core logic.
+//   DEPENDS: none
+//   LINKS: M-EXAMPLE
+// END_MODULE_CONTRACT
+//
+// START_MODULE_MAP
+//   mySpecialWidget - Public runtime widget not inferred by the regex.
+// END_MODULE_MAP
+//
+// START_CHANGE_SUMMARY
+//   LAST_CHANGE: [v0.1 - initial]
+// END_CHANGE_SUMMARY
+`;
+
+// ---------------------------------------------------------------------------
+// Task 1 — symmetric extra-export suppression for heuristic adapters
+// ---------------------------------------------------------------------------
+describe("lintExportMapParity — heuristic adapter extra-export suppression", () => {
+  it("heuristic adapter: MODULE_MAP symbol not seen by regex produces no module-map-extra-export (only heuristic-export-surface advisory)", () => {
+    const root = createProject();
+    writeDartBaseDocs(root);
+
+    // The MODULE_MAP header above lists "mySpecialWidget" but the Dart file
+    // only exports "myOtherWidget" — the regex misses the real export, so an
+    // accurate MODULE_MAP entry would wrongly fire module-map-extra-export.
+    writeProjectFile(
+      root,
+      "lib/example.dart",
+      `${DART_CONTRACT_HEADER}
+// A generated widget constructor that the regex won't reliably catch.
+class mySpecialWidget {}
+`,
+    );
+
+    const result = lintGraceProject(root);
+    const codes = result.issues.map((i) => i.code);
+
+    // The per-file advisory is still emitted once:
+    expect(codes).toContain("analysis.heuristic-export-surface");
+    // But no per-symbol extra-export noise:
+    expect(codes).not.toContain("markup.module-map-extra-export");
+  });
+
+  it("heuristic adapter: symbol only in MODULE_MAP (genuinely absent from file) still produces no module-map-extra-export — suppressed uniformly", () => {
+    const root = createProject();
+    writeDartBaseDocs(root);
+
+    // MODULE_MAP lists "mySpecialWidget" but the file has nothing matching it.
+    // Even so, extra-export must be suppressed for heuristic adapters.
+    writeProjectFile(
+      root,
+      "lib/example.dart",
+      `${DART_CONTRACT_HEADER}
+class completelyUnrelated {}
+`,
+    );
+
+    const result = lintGraceProject(root);
+    const codes = result.issues.map((i) => i.code);
+
+    expect(codes).toContain("analysis.heuristic-export-surface");
+    expect(codes).not.toContain("markup.module-map-extra-export");
+  });
+
+  it("exact adapter (TypeScript): genuinely-extra MODULE_MAP symbol still fires module-map-extra-export", () => {
+    const root = createProject();
+    writeCurrentDocs(root);
+
+    // MODULE_MAP lists "ghost" but the TS file does not export it.
+    writeProjectFile(
+      root,
+      "src/example.ts",
+      `// START_MODULE_CONTRACT
+//   PURPOSE: Run the example flow.
+//   SCOPE: Execute the happy path.
+//   DEPENDS: none
+//   LINKS: M-EXAMPLE
+// END_MODULE_CONTRACT
+//
+// START_MODULE_MAP
+//   run - Execute the example flow.
+//   ghost - This symbol does not exist in the file.
+// END_MODULE_MAP
+//
+// START_CHANGE_SUMMARY
+//   LAST_CHANGE: [v0.1.0 - Added example module]
+// END_CHANGE_SUMMARY
+export function run() {
+  return "ok";
+}
+`,
+    );
+
+    const result = lintGraceProject(root);
+    const codes = result.issues.map((i) => i.code);
+    expect(codes).toContain("markup.module-map-extra-export");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2 — test-path classification: test_ prefix scoping
+// ---------------------------------------------------------------------------
+describe("isLikelyTestPath — test_ prefix only inside test directories", () => {
+  it("lib/core/test_keys.dart is NOT classified as a test path (runtime file)", () => {
+    const root = createProject();
+    writeDartBaseDocs(root, "M-EXAMPLE", "lib/core/test_keys.dart");
+
+    writeProjectFile(
+      root,
+      "lib/core/test_keys.dart",
+      `// START_MODULE_CONTRACT
+//   PURPOSE: Widget-test key constants shipped with the runtime.
+//   SCOPE: Test key string constants used in integration tests.
+//   DEPENDS: none
+//   LINKS: M-EXAMPLE
+// END_MODULE_CONTRACT
+//
+// START_MODULE_MAP
+//   kLoginButtonKey - Test key for the login button.
+// END_MODULE_MAP
+//
+// START_CHANGE_SUMMARY
+//   LAST_CHANGE: [v0.1 - initial]
+// END_CHANGE_SUMMARY
+const kLoginButtonKey = 'login_button';
+`,
+    );
+
+    const result = lintGraceProject(root, { profile: "autonomous" });
+    const codes = result.issues.map((i) => i.code);
+    // Must NOT be excluded as a test file — the module should NOT report missing implementation files.
+    expect(codes).not.toContain("autonomy.module-missing-implementation-files");
+  });
+
+  it("test/foo_test.dart IS classified as a test path", () => {
+    const root = createProject();
+    // Module path points to a runtime file; the test file is only a sibling.
+    writeDartBaseDocs(root, "M-EXAMPLE", "lib/example.dart");
+
+    writeProjectFile(
+      root,
+      "lib/example.dart",
+      `// START_MODULE_CONTRACT
+//   PURPOSE: Example module.
+//   SCOPE: Core logic.
+//   DEPENDS: none
+//   LINKS: M-EXAMPLE
+// END_MODULE_CONTRACT
+//
+// START_MODULE_MAP
+//   run - Execute the example flow.
+// END_MODULE_MAP
+//
+// START_CHANGE_SUMMARY
+//   LAST_CHANGE: [v0.1 - initial]
+// END_CHANGE_SUMMARY
+void run() {}
+`,
+    );
+
+    // The _test.dart suffix is an unambiguous signal regardless of directory.
+    writeProjectFile(root, "test/foo_test.dart", `void main() {}`);
+
+    const result = lintGraceProject(root, { profile: "autonomous" });
+    const codes = result.issues.map((i) => i.code);
+    // lib/example.dart is the implementation; test/foo_test.dart is excluded.
+    // Module should NOT report missing implementation files.
+    expect(codes).not.toContain("autonomy.module-missing-implementation-files");
+  });
+
+  it("test/test_helpers.dart IS classified as a test path (test/ ancestor)", () => {
+    const root = createProject();
+    // Only file linked to the module is test/test_helpers.dart — it lives
+    // under test/ so it must be filtered out as a test file, leaving no impl files.
+    writeDartBaseDocs(root, "M-EXAMPLE", "test/test_helpers.dart");
+
+    writeProjectFile(
+      root,
+      "test/test_helpers.dart",
+      `// START_MODULE_CONTRACT
+//   PURPOSE: Test helper utilities.
+//   SCOPE: Shared test utilities.
+//   DEPENDS: none
+//   LINKS: M-EXAMPLE
+// END_MODULE_CONTRACT
+//
+// START_MODULE_MAP
+//   createFakeUser - Build a fake user object.
+// END_MODULE_MAP
+//
+// START_CHANGE_SUMMARY
+//   LAST_CHANGE: [v0.1 - initial]
+// END_CHANGE_SUMMARY
+void createFakeUser() {}
+`,
+    );
+
+    const result = lintGraceProject(root, { profile: "autonomous" });
+    const codes = result.issues.map((i) => i.code);
+    // The only file is a test helper; after filtering, no impl file → missing impl.
+    expect(codes).toContain("autonomy.module-missing-implementation-files");
+  });
+
+  it("src/x.test.ts IS classified as a test path (unambiguous .test. suffix)", () => {
+    const root = createProject();
+    // Only file linked to the module is src/x.test.ts.
+    writeCurrentDocs(root);
+
+    // Override the knowledge-graph path to the test file only.
+    writeProjectFile(
+      root,
+      "docs/knowledge-graph.xml",
+      `<KnowledgeGraph>
+  <Project NAME="Example" VERSION="0.1.0">
+    <M-EXAMPLE NAME="Example" TYPE="CORE_LOGIC">
+      <purpose>Run the example flow.</purpose>
+      <path>src/x.test.ts</path>
+      <depends>none</depends>
+      <verification-ref>V-M-EXAMPLE</verification-ref>
+      <annotations>
+        <fn-run PURPOSE="Run the example flow" />
+        <export-run PURPOSE="Public module entry point" />
+      </annotations>
+    </M-EXAMPLE>
+  </Project>
+</KnowledgeGraph>`,
+    );
+
+    writeProjectFile(
+      root,
+      "src/x.test.ts",
+      `// START_MODULE_CONTRACT
+//   PURPOSE: Run the example flow.
+//   SCOPE: Test only.
+//   DEPENDS: none
+//   LINKS: M-EXAMPLE
+// END_MODULE_CONTRACT
+//
+// START_MODULE_MAP
+//   SUMMARY: Test file only.
+// END_MODULE_MAP
+//
+// START_CHANGE_SUMMARY
+//   LAST_CHANGE: [v0.1 - initial]
+// END_CHANGE_SUMMARY
+export const x = 1;
+`,
+    );
+
+    const result = lintGraceProject(root, { profile: "autonomous" });
+    const codes = result.issues.map((i) => i.code);
+    // .test.ts suffix is unambiguous — file is excluded as a test file.
+    expect(codes).toContain("autonomy.module-missing-implementation-files");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FIX-6: lintScopedMarkers must not count markers inside string literals
+// ---------------------------------------------------------------------------
+
+// De-literalize block anchors at runtime so this source file does not contain
+// literal START_BLOCK_<NAME> / END_BLOCK_<NAME> tokens (avoids self-lint debt).
+const BLOCK_OPEN = (name: string) => `// ${"START"}_${"BLOCK"}_${name}`;
+const BLOCK_CLOSE = (name: string) => `// ${"END"}_${"BLOCK"}_${name}`;
+
+describe("FIX-6 — lintScopedMarkers string-literal false-positive", () => {
+  it("a marker-looking token inside a string literal does NOT raise duplicate-block-name", () => {
+    const root = createProject();
+    writeCurrentDocs(root);
+
+    // The file has one real // START_BLOCK_FOO / END_BLOCK_FOO pair (in comments).
+    // It also has the same token embedded inside a string literal.
+    // After fix: only the real comment markers are counted → no duplicate.
+    writeProjectFile(
+      root,
+      "src/example.ts",
+      `// START_MODULE_CONTRACT
+//   PURPOSE: Run the example flow.
+//   SCOPE: Execute the happy path.
+//   DEPENDS: none
+//   LINKS: M-EXAMPLE
+// END_MODULE_CONTRACT
+//
+// START_MODULE_MAP
+//   run - Execute the example flow.
+// END_MODULE_MAP
+//
+// START_CHANGE_SUMMARY
+//   LAST_CHANGE: [v0.1.0 - FIX-6 test]
+// END_CHANGE_SUMMARY
+export function run() {
+  // The string below contains a marker-looking token — must not be counted.
+  const label = "${"START"}_${"BLOCK"}_FOO inside a string, not real markup";
+  ${BLOCK_OPEN("FOO")}
+  return label;
+  ${BLOCK_CLOSE("FOO")}
+}
+`,
+    );
+
+    const result = lintGraceProject(root);
+    const codes = result.issues.map((i) => i.code);
+    expect(codes).not.toContain("markup.duplicate-block-name");
+  });
+
+  it("two real // START_BLOCK_FOO comment lines (not in strings) still raise duplicate-block-name", () => {
+    const root = createProject();
+    writeCurrentDocs(root);
+
+    writeProjectFile(
+      root,
+      "src/example.ts",
+      `// START_MODULE_CONTRACT
+//   PURPOSE: Run the example flow.
+//   SCOPE: Execute the happy path.
+//   DEPENDS: none
+//   LINKS: M-EXAMPLE
+// END_MODULE_CONTRACT
+//
+// START_MODULE_MAP
+//   run - Execute the example flow.
+// END_MODULE_MAP
+//
+// START_CHANGE_SUMMARY
+//   LAST_CHANGE: [v0.1.0 - FIX-6 duplicate test]
+// END_CHANGE_SUMMARY
+export function run() {
+  ${BLOCK_OPEN("FOO")}
+  const x = 1;
+  ${BLOCK_CLOSE("FOO")}
+  ${BLOCK_OPEN("FOO")}
+  return x;
+  ${BLOCK_CLOSE("FOO")}
+}
+`,
+    );
+
+    const result = lintGraceProject(root);
+    const codes = result.issues.map((i) => i.code);
+    expect(codes).toContain("markup.duplicate-block-name");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PATCH B — external-module lint exemptions (lintAutonomousReadiness)
+// ---------------------------------------------------------------------------
+
+/**
+ * Write a minimal full docs set for an external/integration module with no
+ * local implementation files.  Callers can override individual docs after.
+ */
+function writeExternalModuleDocs(
+  root: string,
+  opts: {
+    moduleType?: string;
+    graphPath?: string;
+    withVerification?: boolean;
+  } = {},
+) {
+  const {
+    moduleType = "CORE_LOGIC",
+    graphPath = "src/example.ts",
+    withVerification = true,
+  } = opts;
+
+  writeProjectFile(
+    root,
+    "docs/technology.xml",
+    `<TechnologyStack VERSION="0.2.0">
+  <Runtime>bun 1.3.8</Runtime>
+  <Language>typescript 6.x</Language>
+  <PreferredAgentStack>
+    <preferred-runtime-library>bun</preferred-runtime-library>
+    <preferred-test-library>bun:test</preferred-test-library>
+  </PreferredAgentStack>
+  <AutonomyPolicy>
+    <default-execution-profile>balanced</default-execution-profile>
+    <max-fix-attempts-per-step>2</max-fix-attempts-per-step>
+  </AutonomyPolicy>
+</TechnologyStack>`,
+  );
+
+  writeProjectFile(
+    root,
+    "docs/knowledge-graph.xml",
+    `<KnowledgeGraph>
+  <Project NAME="Example" VERSION="0.1.0">
+    <M-EXAMPLE NAME="Example" TYPE="${moduleType}">
+      <purpose>External dependency module.</purpose>
+      <path>${graphPath}</path>
+      <depends>none</depends>${withVerification ? "\n      <verification-ref>V-M-EXAMPLE</verification-ref>" : ""}
+    </M-EXAMPLE>
+  </Project>
+</KnowledgeGraph>`,
+  );
+
+  writeProjectFile(
+    root,
+    "docs/development-plan.xml",
+    `<DevelopmentPlan VERSION="0.1.0">
+  <Modules>
+    <M-EXAMPLE NAME="Example" TYPE="${moduleType}" STATUS="planned">
+      <contract><purpose>External dependency module.</purpose></contract>
+      ${withVerification ? "<verification-ref>V-M-EXAMPLE</verification-ref>" : ""}
+    </M-EXAMPLE>
+  </Modules>
+</DevelopmentPlan>`,
+  );
+
+  const verificationPlanXml = withVerification
+    ? `<VerificationPlan VERSION="0.1.0">
+  <ModuleVerification>
+    <V-M-EXAMPLE MODULE="M-EXAMPLE">
+      <test-files><file-1>src/example.test.ts</file-1></test-files>
+      <module-checks><command-1>bun test src/example.test.ts</command-1></module-checks>
+      <scenarios><scenario-1 kind="success">Happy path.</scenario-1></scenarios>
+      <required-log-markers><marker-1>[ExampleDomain][run][BLOCK_EXECUTE_FLOW]</marker-1></required-log-markers>
+    </V-M-EXAMPLE>
+  </ModuleVerification>
+</VerificationPlan>`
+    : `<VerificationPlan VERSION="0.1.0" />`;
+
+  writeProjectFile(root, "docs/verification-plan.xml", verificationPlanXml);
+
+  writeProjectFile(
+    root,
+    "docs/operational-packets.xml",
+    `<OperationalPackets VERSION="0.1.0">
+  <ExecutionPacketTemplate>
+    <ExecutionPacket>
+      <assumptions />
+      <stop-conditions />
+      <retry-budget>2</retry-budget>
+      <checkpoint-fields />
+    </ExecutionPacket>
+  </ExecutionPacketTemplate>
+  <GraphDeltaTemplate><GraphDelta /></GraphDeltaTemplate>
+  <VerificationDeltaTemplate><VerificationDelta /></VerificationDeltaTemplate>
+  <FailurePacketTemplate><FailurePacket /></FailurePacketTemplate>
+  <CheckpointReportTemplate><CheckpointReport /></CheckpointReportTemplate>
+</OperationalPackets>`,
+  );
+}
+
+describe("PATCH B — external-module autonomy exemption", () => {
+  it("B1: module with path /^external\\b/ and no local files does NOT raise module-missing-implementation-files", () => {
+    // External path (e.g. a git submodule / vendored dep declared by path starting
+    // with "external") means there are no governed source files in the repo.
+    // The autonomy linter must skip the impl-surface check for such modules.
+    const root = createProject();
+    writeExternalModuleDocs(root, {
+      moduleType: "CORE_LOGIC",
+      graphPath: "external (git.example.com/org/dep)",
+      withVerification: true,
+    });
+    // No source file written — intentionally zero local files.
+
+    const result = lintGraceProject(root, { profile: "autonomous" });
+    const codes = result.issues.map((i) => i.code);
+    expect(codes).not.toContain("autonomy.module-missing-implementation-files");
+  });
+
+  it("B2: module with TYPE=INTEGRATION and no local files does NOT raise module-missing-implementation-files", () => {
+    // INTEGRATION modules represent external service boundaries; they have no
+    // local implementation files by design.  The type-based branch must exempt them.
+    const root = createProject();
+    writeExternalModuleDocs(root, {
+      moduleType: "INTEGRATION",
+      graphPath: "src/integrations/payment-gateway.ts",
+      withVerification: true,
+    });
+    // No source file written — intentionally zero local files.
+
+    const result = lintGraceProject(root, { profile: "autonomous" });
+    const codes = result.issues.map((i) => i.code);
+    expect(codes).not.toContain("autonomy.module-missing-implementation-files");
+  });
+
+  it("B3: external module (path-based) with no V-M entry emits module-missing-verification as warning, not error", () => {
+    // External modules still need a verification plan entry, but the severity is
+    // downgraded to warning (non-blocking) because the impl surface is not local.
+    const root = createProject();
+    writeExternalModuleDocs(root, {
+      moduleType: "CORE_LOGIC",
+      graphPath: "external (git.example.com/org/dep)",
+      withVerification: false,
+    });
+    // No source file written — intentionally zero local files.
+
+    const result = lintGraceProject(root, { profile: "autonomous" });
+    const verificationIssues = result.issues.filter(
+      (i) => i.code === "autonomy.module-missing-verification",
+    );
+    expect(verificationIssues.length).toBeGreaterThan(0);
+    // Must be downgraded to warning, not an error.
+    for (const issue of verificationIssues) {
+      expect(issue.severity).toBe("warning");
+    }
+    // warning must NOT inflate the error count.
+    expect(result.summary.errors).toBe(0);
+  });
+
+  it("B4: non-external module (TYPE=CORE_LOGIC, normal path) with no local files STILL raises module-missing-implementation-files as error", () => {
+    // Proves the exemption is scoped only to external/INTEGRATION modules;
+    // ordinary modules must still fail the impl-surface gate.
+    const root = createProject();
+    writeExternalModuleDocs(root, {
+      moduleType: "CORE_LOGIC",
+      graphPath: "src/example.ts",
+      withVerification: true,
+    });
+    // No source file written — intentionally zero local files.
+
+    const result = lintGraceProject(root, { profile: "autonomous" });
+    const implIssues = result.issues.filter(
+      (i) => i.code === "autonomy.module-missing-implementation-files",
+    );
+    expect(implIssues.length).toBeGreaterThan(0);
+    for (const issue of implIssues) {
+      expect(issue.severity).toBe("error");
+    }
   });
 });

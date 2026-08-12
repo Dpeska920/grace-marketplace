@@ -3,12 +3,14 @@ import path from "node:path";
 
 import { loadGraceLintConfig } from "./config";
 import { getLanguageAdapter } from "./adapters/base";
+import { maskStringContents } from "./adapters/source-scan";
 import { withLintIssueGuide } from "./catalog";
-import { loadGraceArtifactIndex } from "../query/core";
+import { getModuleType, loadGraceArtifactIndex } from "../query/core";
 import {
   collectCodeFiles,
   findSection,
   hasGraceMarkers,
+  isLikelyTestPath,
   lineNumberAt,
   normalizeRelative,
   readTextIfExists,
@@ -155,7 +157,10 @@ function lintScopedMarkers(
   endRegex: RegExp,
   kind: "block" | "contract",
 ) {
-  const lines = text.split("\n");
+  // Use masked text so that marker-looking tokens inside string literals
+  // (e.g. `const s = "// START_BLOCK_FOO"`) are not counted as real markup.
+  // maskStringContents preserves newlines, so line numbers stay correct.
+  const lines = maskStringContents(text).split("\n");
   const stack: Array<{ name: string; line: number }> = [];
   const seen = new Set<string>();
 
@@ -608,8 +613,9 @@ function lintAutonomousReadiness(
   operationalPackets: string | null,
   ignoredDirs: string[],
 ) {
-  const isLikelyTestPath = (relativePath: string) => /(^|\/)(__tests__|tests)(\/|$)|(^|\/)(test_[^/]+|[^/]+\.(test|spec)\.[^.]+)$/.test(relativePath);
-  const looksLikeEvidenceEmission = (line: string) => /(console\.|logger\.|tracer\.|trace\(|emit\(|\.(info|warn|error|debug|trace)\s*\()/.test(line);
+  // isLikelyTestPath — imported from project-utils (canonical shared helper).
+  // Generic `Identifier.<level>(` covers Flutter Log.w/e/d/i and similar; gated by co-located marker literal so it can only suppress, never raise.
+  const looksLikeEvidenceEmission = (line: string) => /(console\.|logger\.|tracer\.|trace\(|emit\(|\.(info|warn|error|debug|trace)\s*\(|debugPrint\(|developer\.log\(|dev\.log\(|\b[A-Za-z_]\w*\.(w|e|d|i|v|wtf|warn|error|debug|info|verbose|trace)\s*\()/.test(line);
   const parseMarkerBlockName = (marker: string) => {
     const match = marker.match(/\[([^\]]+)\]\s*$/);
     if (!match) {
@@ -618,10 +624,55 @@ function lintAutonomousReadiness(
 
     return match[1].startsWith("BLOCK_") ? match[1].slice("BLOCK_".length) : undefined;
   };
-  const lineHasRuntimeMarker = (text: string, marker: string) =>
-    text
-      .split("\n")
-      .some((line) => line.includes(marker) && !/^\s*(\/\/|#|--|;+|\*)/.test(line) && looksLikeEvidenceEmission(line));
+  const lineHasRuntimeMarker = (text: string, marker: string) => {
+    // Coalesce physical lines into logical statements so that dartfmt-wrapped
+    // calls (where the emit primitive and the marker string land on different
+    // physical lines) are still detected.  A logical statement ends when the
+    // cumulative open-paren balance returns to zero (or a bare `;` closes it).
+    //
+    // Paren depth is computed from the MASKED version of each line (so parens
+    // inside string literals like `debugPrint('hello (world');` do not affect
+    // the balance). The ORIGINAL line is accumulated into `current` so that
+    // marker matching (which looks for the marker inside a string argument) and
+    // the looksLikeEvidenceEmission check (which looks for `debugPrint(` etc.)
+    // both operate on real source text.
+    const physicalLines = text.split("\n");
+    const maskedLines = maskStringContents(text).split("\n");
+    const statements: string[] = [];
+    let current = "";
+    let depth = 0;
+    for (let idx = 0; idx < physicalLines.length; idx++) {
+      const line = physicalLines[idx];
+      const maskedLine = maskedLines[idx] ?? "";
+      // Skip comment-only lines from the statement entirely so they cannot
+      // act as the "emit primitive" half of a match.
+      if (/^\s*(\/\/|#|--|;+|\*)/.test(line)) {
+        // If we are not inside an open paren group, flush any accumulated
+        // statement first (it was terminated by the comment boundary).
+        if (depth === 0 && current.trim()) {
+          statements.push(current);
+          current = "";
+        }
+        continue;
+      }
+      // Accumulate original text for matching; count parens on masked text.
+      current += (current ? " " : "") + line;
+      for (const ch of maskedLine) {
+        if (ch === "(") depth++;
+        else if (ch === ")") depth = Math.max(0, depth - 1);
+      }
+      if (depth === 0) {
+        if (current.trim()) {
+          statements.push(current);
+        }
+        current = "";
+      }
+    }
+    if (current.trim()) {
+      statements.push(current);
+    }
+    return statements.some((stmt) => stmt.includes(marker) && looksLikeEvidenceEmission(stmt));
+  };
 
   if (!operationalPackets) {
     addAutonomyIssue(
@@ -721,17 +772,23 @@ function lintAutonomousReadiness(
 
   for (const moduleRecord of sharedModules) {
     const moduleImplementationFiles = moduleRecord.localFiles.filter((file) => !isLikelyTestPath(file.path));
+    // External/INTEGRATION modules are exempt from impl-surface and hard verification requirements;
+    // step-level verification refs (if the plan declares steps) are still required by design.
+    const isExternal =
+      getModuleType(moduleRecord) === "INTEGRATION" ||
+      /^external\b/i.test(moduleRecord.graph?.path ?? "");
+
     if (moduleRecord.verifications.length === 0) {
       addAutonomyIssue(
         result,
-        "error",
+        isExternal ? "warning" : "error",
         "autonomy.module-missing-verification",
         "docs/verification-plan.xml",
         `Module \`${moduleRecord.id}\` has shared planning or graph context but no matching verification entry. Autonomous runs require a V-M entry per shared module.`,
       );
     }
 
-    if (moduleImplementationFiles.length === 0) {
+    if (!isExternal && moduleImplementationFiles.length === 0) {
       addAutonomyIssue(
         result,
         "error",
@@ -818,7 +875,20 @@ function lintAutonomousReadiness(
         );
       }
 
-      if (!entry.moduleChecks.some((check) => check.includes(testFile) || check.includes(path.dirname(testFile)))) {
+      if (!entry.moduleChecks.some((check) => {
+        // Existing: exact-path or exact-dirname in the check command.
+        if (check.includes(testFile) || check.includes(path.dirname(testFile))) return true;
+        // Also count it when the check references an ANCESTOR directory of the
+        // test file (e.g. `flutter test test/features/backup/ui/` covers a file
+        // at `test/features/backup/ui/bloc/x_test.dart`).  Extract path-like
+        // tokens from the command (args that contain "/" or end without a flag
+        // prefix) and test whether any of them is a prefix directory of testFile.
+        const tokens = check.split(/\s+/).filter((t) => t.includes("/") && !t.startsWith("-"));
+        return tokens.some((t) => {
+          const dir = t.endsWith("/") ? t : t + "/";
+          return testFile.startsWith(dir);
+        });
+      })) {
         addAutonomyIssue(
           result,
           "warning",
@@ -928,30 +998,39 @@ function lintExportMapParity(
     return;
   }
 
-  for (const exportName of analysis.exports) {
-    if (!mappedSymbols.has(exportName)) {
-      addIssue(result, {
-        severity: exportSeverity,
-        code: "markup.module-map-missing-export",
-        file: relativePath,
-        message: `MODULE_MAP is missing the exported symbol \`${exportName}\`.`,
-      });
+  // missing-export: guarded by exportConfidence (unchanged).
+  // exact adapters (TypeScript) keep full per-symbol missing-export checks;
+  // heuristic adapters (Dart, Kotlin, Swift, Vue) suppress them because
+  // regex extraction may miss real declarations (overloads, generated symbols).
+  // Python with __all__ is "exact" so it also checks missing-export.
+  if (analysis.exportConfidence !== "heuristic") {
+    for (const exportName of analysis.exports) {
+      if (!mappedSymbols.has(exportName)) {
+        addIssue(result, {
+          severity: exportSeverity,
+          code: "markup.module-map-missing-export",
+          file: relativePath,
+          message: `MODULE_MAP is missing the exported symbol \`${exportName}\`.`,
+        });
+      }
     }
   }
 
-  for (const item of items) {
-    if (!item.symbolName) {
-      continue;
-    }
+  if (analysis.exportsComplete) {
+    for (const item of items) {
+      if (!item.symbolName) {
+        continue;
+      }
 
-    if (!analysis.exports.has(item.symbolName)) {
-      addIssue(result, {
-        severity: role === "RUNTIME" || role === "TYPES" ? "warning" : "warning",
-        code: "markup.module-map-extra-export",
-        file: relativePath,
-        line: item.line,
-        message: `MODULE_MAP lists \`${item.symbolName}\`, but no matching export was found by the ${analysis.adapterId} adapter.`,
-      });
+      if (!analysis.exports.has(item.symbolName)) {
+        addIssue(result, {
+          severity: exportSeverity,
+          code: "markup.module-map-extra-export",
+          file: relativePath,
+          line: item.line,
+          message: `MODULE_MAP lists \`${item.symbolName}\`, but no matching export was found by the ${analysis.adapterId} adapter.`,
+        });
+      }
     }
   }
 }

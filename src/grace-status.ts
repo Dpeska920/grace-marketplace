@@ -15,6 +15,7 @@ import {
   collectCodeFiles,
   findSection,
   hasGraceMarkers,
+  isLikelyTestPath,
   readTextIfExists,
   stripCommentPrefix,
   stripQuotedStrings,
@@ -179,9 +180,7 @@ function parseFieldSection(text: string | null) {
   return fields;
 }
 
-function isProbablyTestFile(relativePath: string) {
-  return /(^|\/)(__tests__|tests)(\/|$)|(^|\/)(test_[^/]+|[^/]+\.(test|spec)\.[^.]+)$/.test(relativePath);
-}
+// isLikelyTestPath — imported from project-utils (canonical shared helper).
 
 function scanCodebase(root: string): ScannedFile[] {
   const { config } = loadGraceLintConfig(root);
@@ -200,7 +199,7 @@ function scanCodebase(root: string): ScannedFile[] {
       hasChangeSummary ? findSection(searchable, "START_CHANGE_SUMMARY", "END_CHANGE_SUMMARY")?.content ?? null : null,
     );
     const stableMarkerRegex = /\[[^\]]+\]\[[^\]]+\]\[BLOCK_[A-Z0-9_]+\]/;
-    const isTest = isProbablyTestFile(relativePath);
+    const isTest = isLikelyTestPath(relativePath);
 
     return {
       path: relativePath,

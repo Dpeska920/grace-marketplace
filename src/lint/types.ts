@@ -70,6 +70,11 @@ export type LanguageAnalysis = {
   valueExports: Set<string>;
   typeExports: Set<string>;
   exportConfidence: "exact" | "heuristic";
+  /** True when the adapter's extraction sees ALL top-level definitions in the file
+   * (so a symbol absent from `exports` is genuinely absent, not just missed).
+   * Independent of exportConfidence: Python without __all__ is heuristic confidence
+   * but still has complete definition extraction via the real ast module. */
+  exportsComplete: boolean;
   hasDefaultExport: boolean;
   hasWildcardReExport: boolean;
   hasMainEntrypoint: boolean;

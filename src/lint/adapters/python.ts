@@ -109,16 +109,12 @@ for node in tree.body:
 
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         local_implementation_count += 1
-        if node.name.startswith("test_"):
-            uses_test_framework = True
         if is_public(node.name):
             local_public.add(node.name)
         continue
 
     if isinstance(node, ast.ClassDef):
         local_implementation_count += 1
-        if node.name.startswith("Test"):
-            uses_test_framework = True
         if is_public(node.name):
             local_public.add(node.name)
         continue
@@ -185,6 +181,9 @@ function createEmptyAnalysis(): LanguageAnalysis {
     valueExports: new Set<string>(),
     typeExports: new Set<string>(),
     exportConfidence: "heuristic",
+    // Python uses a real ast parse tree — it sees ALL top-level definitions even
+    // when __all__ is absent (confidence stays heuristic but extraction is complete).
+    exportsComplete: true,
     hasDefaultExport: false,
     hasWildcardReExport: false,
     hasMainEntrypoint: false,

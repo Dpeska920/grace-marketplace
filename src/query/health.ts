@@ -3,10 +3,7 @@ import path from "node:path";
 
 import { getModuleName, getModulePath, getModuleType, resolveModule } from "./core";
 import type { GraceArtifactIndex, ModuleHealthIssue, ModuleHealthRecord, ModuleRecord } from "./types";
-
-function isLikelyTestPath(relativePath: string) {
-  return /(^|\/)(__tests__|tests)(\/|$)|(^|\/)(test_[^/]+|[^/]+\.(test|spec)\.[^.]+)$/.test(relativePath);
-}
+import { isLikelyTestPath } from "../project-utils";
 
 function parseMarkerBlockName(marker: string) {
   const match = marker.match(/\[([^\]]+)\]\s*$/);
@@ -17,8 +14,9 @@ function parseMarkerBlockName(marker: string) {
   return match[1].startsWith("BLOCK_") ? match[1].slice("BLOCK_".length) : undefined;
 }
 
+// Generic `Identifier.<level>(` covers Flutter Log.w/e/d/i and similar; gated by co-located marker literal so it can only suppress, never raise.
 function looksLikeEvidenceEmission(line: string) {
-  return /(console\.|logger\.|tracer\.|trace\(|emit\(|\.(info|warn|error|debug|trace)\s*\()/.test(line);
+  return /(console\.|logger\.|tracer\.|trace\(|emit\(|\.(info|warn|error|debug|trace)\s*\(|\b[A-Za-z_]\w*\.(w|e|d|i|v|wtf|warn|error|debug|info|verbose|trace)\s*\()/.test(line);
 }
 
 function pushIssue(

@@ -32,10 +32,13 @@ const CODE_EXTENSIONS = new Set([
   ".go",
   ".java",
   ".kt",
+  ".kts",
   ".rs",
   ".rb",
   ".php",
   ".swift",
+  ".dart",
+  ".vue",
   ".scala",
   ".sql",
   ".sh",
@@ -103,7 +106,7 @@ export function hasGraceMarkers(text: string) {
   const searchable = stripQuotedStrings(text);
   return searchable
     .split("\n")
-    .some((line) => /^(\s*)(\/\/|#|--|;+|\*)\s*(START_MODULE_CONTRACT|START_MODULE_MAP|START_CONTRACT:|START_BLOCK_|START_CHANGE_SUMMARY)/.test(line));
+    .some((line) => /^(\s*)(\/\/|#|--|;+|\*|<!--)\s*(START_MODULE_CONTRACT|START_MODULE_MAP|START_CONTRACT:|START_BLOCK_|START_CHANGE_SUMMARY)/.test(line));
 }
 
 export function collectCodeFiles(root: string, ignoredDirs: string[], currentDir = root): string[] {
@@ -134,8 +137,15 @@ export function collectCodeFiles(root: string, ignoredDirs: string[], currentDir
   return files;
 }
 
+// Shared test-path classifier. Canonical home — all callers import from here.
+// test_ bare prefix is NOT a global signal (e.g. lib/core/test_keys.dart is runtime code).
+// Suffix signals are language-scoped: _test.dart|py (suffix) and test_*.py (prefix).
+export function isLikelyTestPath(relativePath: string): boolean {
+  return /(^|\/)(__tests__|tests?)(\/|$)|(^|\/)[^/]+\.(test|spec)\.[^.]+$|(^|\/)[^/]+_test\.(dart|py)$|(^|\/)test_[^/]+\.py$/.test(relativePath);
+}
+
 export function stripCommentPrefix(line: string) {
-  return line.replace(/^\s*(\/\/|#|--|;+|\*)?\s*/, "");
+  return line.replace(/^\s*(<!--|\/\/|#|--|;+|\*)?\s*/, "");
 }
 
 export function findSection(text: string, startMarker: string, endMarker: string) {

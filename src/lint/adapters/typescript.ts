@@ -53,6 +53,132 @@ function addExport(
   }
 }
 
+export function analyzeTypeScriptSource(filePath: string, text: string): LanguageAnalysis {
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    getScriptKind(filePath),
+  );
+
+  const analysis: LanguageAnalysis = {
+    adapterId: "js-ts",
+    exports: new Set<string>(),
+    valueExports: new Set<string>(),
+    typeExports: new Set<string>(),
+    exportConfidence: "exact",
+    exportsComplete: true,
+    hasDefaultExport: false,
+    hasWildcardReExport: false,
+    hasMainEntrypoint: false,
+    directReExportCount: 0,
+    localExportCount: 0,
+    localImplementationCount: 0,
+    usesTestFramework: false,
+  };
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement)) {
+      const importSource = ts.isStringLiteral(statement.moduleSpecifier)
+        ? statement.moduleSpecifier.text
+        : null;
+      if (importSource && TEST_IMPORTS.has(importSource)) {
+        analysis.usesTestFramework = true;
+      }
+      continue;
+    }
+
+    if (ts.isExpressionStatement(statement)) {
+      const expression = statement.expression;
+      if (ts.isCallExpression(expression) && ts.isIdentifier(expression.expression) && TEST_CALLS.has(expression.expression.text)) {
+        analysis.usesTestFramework = true;
+      }
+    }
+
+    if (ts.isExportAssignment(statement)) {
+      analysis.localImplementationCount += 1;
+      addExport(analysis, "default", "value", { local: true, defaultExport: true });
+      continue;
+    }
+
+    if (ts.isExportDeclaration(statement)) {
+      const isReExport = Boolean(statement.moduleSpecifier);
+      if (isReExport) {
+        analysis.directReExportCount += 1;
+      }
+
+      if (!statement.exportClause) {
+        analysis.hasWildcardReExport = true;
+        continue;
+      }
+
+      if (ts.isNamedExports(statement.exportClause)) {
+        for (const element of statement.exportClause.elements) {
+          const exportName = element.name.text;
+          const isTypeOnly = statement.isTypeOnly || element.isTypeOnly;
+          addExport(analysis, exportName, isTypeOnly ? "type" : "value", isReExport ? {} : { local: true });
+        }
+      }
+      continue;
+    }
+
+    if (ts.isVariableStatement(statement) && hasExportModifier(statement)) {
+      analysis.localImplementationCount += 1;
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name)) {
+          addExport(analysis, declaration.name.text, "value", { local: true });
+        }
+      }
+      continue;
+    }
+
+    if (ts.isFunctionDeclaration(statement) && hasExportModifier(statement)) {
+      analysis.localImplementationCount += 1;
+      if (hasDefaultModifier(statement)) {
+        addExport(analysis, "default", "value", { local: true, defaultExport: true });
+      } else if (statement.name) {
+        addExport(analysis, statement.name.text, "value", { local: true });
+      }
+      continue;
+    }
+
+    if (ts.isClassDeclaration(statement) && hasExportModifier(statement)) {
+      analysis.localImplementationCount += 1;
+      if (hasDefaultModifier(statement)) {
+        addExport(analysis, "default", "value", { local: true, defaultExport: true });
+      } else if (statement.name) {
+        addExport(analysis, statement.name.text, "value", { local: true });
+      }
+      continue;
+    }
+
+    if (ts.isInterfaceDeclaration(statement) && hasExportModifier(statement)) {
+      addExport(analysis, statement.name.text, "type", { local: true });
+      continue;
+    }
+
+    if (ts.isTypeAliasDeclaration(statement) && hasExportModifier(statement)) {
+      addExport(analysis, statement.name.text, "type", { local: true });
+      continue;
+    }
+
+    if (ts.isEnumDeclaration(statement) && hasExportModifier(statement)) {
+      analysis.localImplementationCount += 1;
+      addExport(analysis, statement.name.text, "value", { local: true });
+      continue;
+    }
+
+    if (ts.isModuleDeclaration(statement) && hasExportModifier(statement)) {
+      analysis.localImplementationCount += 1;
+      addExport(analysis, statement.name.getText(sourceFile), "value", { local: true });
+      continue;
+    }
+  }
+
+  return analysis;
+}
+
 export function createTypeScriptAdapter(): LanguageAdapter {
   return {
     id: "js-ts",
@@ -60,128 +186,7 @@ export function createTypeScriptAdapter(): LanguageAdapter {
       return TS_EXTENSIONS.has(path.extname(filePath));
     },
     analyze(filePath, text) {
-      const sourceFile = ts.createSourceFile(
-        filePath,
-        text,
-        ts.ScriptTarget.Latest,
-        true,
-        getScriptKind(filePath),
-      );
-
-      const analysis: LanguageAnalysis = {
-        adapterId: "js-ts",
-        exports: new Set<string>(),
-        valueExports: new Set<string>(),
-        typeExports: new Set<string>(),
-        exportConfidence: "exact",
-        hasDefaultExport: false,
-        hasWildcardReExport: false,
-        hasMainEntrypoint: false,
-        directReExportCount: 0,
-        localExportCount: 0,
-        localImplementationCount: 0,
-        usesTestFramework: false,
-      };
-
-      for (const statement of sourceFile.statements) {
-        if (ts.isImportDeclaration(statement)) {
-          const importSource = ts.isStringLiteral(statement.moduleSpecifier)
-            ? statement.moduleSpecifier.text
-            : null;
-          if (importSource && TEST_IMPORTS.has(importSource)) {
-            analysis.usesTestFramework = true;
-          }
-          continue;
-        }
-
-        if (ts.isExpressionStatement(statement)) {
-          const expression = statement.expression;
-          if (ts.isCallExpression(expression) && ts.isIdentifier(expression.expression) && TEST_CALLS.has(expression.expression.text)) {
-            analysis.usesTestFramework = true;
-          }
-        }
-
-        if (ts.isExportAssignment(statement)) {
-          analysis.localImplementationCount += 1;
-          addExport(analysis, "default", "value", { local: true, defaultExport: true });
-          continue;
-        }
-
-        if (ts.isExportDeclaration(statement)) {
-          const isReExport = Boolean(statement.moduleSpecifier);
-          if (isReExport) {
-            analysis.directReExportCount += 1;
-          }
-
-          if (!statement.exportClause) {
-            analysis.hasWildcardReExport = true;
-            continue;
-          }
-
-          if (ts.isNamedExports(statement.exportClause)) {
-            for (const element of statement.exportClause.elements) {
-              const exportName = element.name.text;
-              const isTypeOnly = statement.isTypeOnly || element.isTypeOnly;
-              addExport(analysis, exportName, isTypeOnly ? "type" : "value", isReExport ? {} : { local: true });
-            }
-          }
-          continue;
-        }
-
-        if (ts.isVariableStatement(statement) && hasExportModifier(statement)) {
-          analysis.localImplementationCount += 1;
-          for (const declaration of statement.declarationList.declarations) {
-            if (ts.isIdentifier(declaration.name)) {
-              addExport(analysis, declaration.name.text, "value", { local: true });
-            }
-          }
-          continue;
-        }
-
-        if (ts.isFunctionDeclaration(statement) && hasExportModifier(statement)) {
-          analysis.localImplementationCount += 1;
-          if (hasDefaultModifier(statement)) {
-            addExport(analysis, "default", "value", { local: true, defaultExport: true });
-          } else if (statement.name) {
-            addExport(analysis, statement.name.text, "value", { local: true });
-          }
-          continue;
-        }
-
-        if (ts.isClassDeclaration(statement) && hasExportModifier(statement)) {
-          analysis.localImplementationCount += 1;
-          if (hasDefaultModifier(statement)) {
-            addExport(analysis, "default", "value", { local: true, defaultExport: true });
-          } else if (statement.name) {
-            addExport(analysis, statement.name.text, "value", { local: true });
-          }
-          continue;
-        }
-
-        if (ts.isInterfaceDeclaration(statement) && hasExportModifier(statement)) {
-          addExport(analysis, statement.name.text, "type", { local: true });
-          continue;
-        }
-
-        if (ts.isTypeAliasDeclaration(statement) && hasExportModifier(statement)) {
-          addExport(analysis, statement.name.text, "type", { local: true });
-          continue;
-        }
-
-        if (ts.isEnumDeclaration(statement) && hasExportModifier(statement)) {
-          analysis.localImplementationCount += 1;
-          addExport(analysis, statement.name.text, "value", { local: true });
-          continue;
-        }
-
-        if (ts.isModuleDeclaration(statement) && hasExportModifier(statement)) {
-          analysis.localImplementationCount += 1;
-          addExport(analysis, statement.name.getText(sourceFile), "value", { local: true });
-          continue;
-        }
-      }
-
-      return analysis;
+      return analyzeTypeScriptSource(filePath, text);
     },
   };
 }
