@@ -45,7 +45,7 @@ const AUDIT_REGRESSION_CASES: readonly AuditRegressionCase[] = [
   { id: "python-unicode", testFile: "src/lint/adapters/python.test.ts", evidence: "UTF-8", platforms: allPlatforms },
   { id: "python-unicode-module-map", testFile: "src/project-utils.test.ts", evidence: "Unicode identifiers in exact Python MODULE_MAP parity", platforms: allPlatforms },
   { id: "typescript-namespace-export", testFile: "src/lint/adapters/typescript.test.ts", evidence: "namespace re-export names exactly", platforms: allPlatforms },
-  { id: "dart-valid-invocation", testFile: "src/lint/adapters/dart.test.ts", evidence: "temporary analyzer file", platforms: allPlatforms },
+  { id: "dart-no-subprocess-invocation", testFile: "src/lint/adapters/dart.test.ts", evidence: "does not invoke an external dart binary via subprocess", platforms: allPlatforms },
   { id: "adapter-runtime-missing", testFile: "src/project-utils.test.ts", evidence: "analysis.runtime-missing", platforms: allPlatforms },
   { id: "approved-plan-immutability", testFile: "scripts/skill-contracts.test.ts", evidence: "approved_plan_immutability", platforms: allPlatforms },
   { id: "migration-cleanup-gates", testFile: "scripts/skill-contracts.test.ts", evidence: "git availability/worktree inspection", platforms: allPlatforms },

@@ -23,9 +23,9 @@ Every important source file must begin with:
 // END_MODULE_MAP
 ```
 
-Adapt comment syntax to the project language (`#` for Python, `//` for Dart/Go/TS/Java, `--` for SQL). Marker grammar is strict: canonical marker tokens and field labels must appear at the start of the normalized comment payload, not inside prose, strings, or unrelated code.
+Adapt comment syntax to the project language (`#` for Python, `//` for Dart/Kotlin/Swift/Go/TS/Java and Vue `<script>` blocks, `--` for SQL). Marker grammar is strict: canonical marker tokens and field labels must appear at the start of the normalized comment payload, not inside prose, strings, or unrelated code.
 
-The CLI bundles TypeScript/JavaScript analysis and can enforce exact compiler-derived export parity there. Governed Python and Dart files use runtime-backed adapters and therefore require `python3`/`python` or `dart` on `PATH`. Python exports are exact when the source declares a static `__all__`, including Unicode identifiers; otherwise Python analysis emits `analysis.heuristic-confidence`. A missing runtime fails closed with actionable `analysis.runtime-missing`; a present adapter that fails emits `analysis.adapter-failed`. Neither diagnostic can count as parity success.
+The CLI bundles TypeScript/JavaScript analysis and can enforce exact compiler-derived export parity there. Governed Python files use a runtime-backed adapter and therefore require `python3`/`python` on `PATH`; Python exports are exact when the source declares a static `__all__`, including Unicode identifiers, and otherwise emit `analysis.heuristic-confidence`. Governed Dart (`.dart`), Kotlin (`.kt`, `.kts`), Swift (`.swift`), and Vue (`.vue`) files use in-process heuristic adapters that need no runtime on `PATH`; they always emit `analysis.heuristic-confidence`, and their `MODULE_MAP` mismatches are reported as `analysis.heuristic-map-mismatch` warnings rather than `markup.module-map-mismatch` errors. A missing Python runtime fails closed with actionable `analysis.runtime-missing`; a present adapter that fails emits `analysis.adapter-failed`. Neither diagnostic can count as parity success.
 
 Substantial test files should use the same structure when tests are the fastest way for future agents to understand behavior, fixtures, and expected evidence.
 

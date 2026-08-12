@@ -119,7 +119,11 @@ export function resolveContainedProjectPath(
   return {
     authoredPath,
     relativePath,
-    absolutePath: realTarget,
+    // Returns the lexical target, not the realpath'd one: callers compare this against other
+    // lexically resolved paths (e.g. path.resolve(...) results from directory listings), and on
+    // platforms where the OS temp dir is itself a symlink (macOS /var -> /private/var) the two
+    // forms diverge. Containment is still enforced above via realTarget/realAllowedRoot.
+    absolutePath: lexicalTarget,
   };
 }
 

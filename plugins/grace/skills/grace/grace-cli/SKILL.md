@@ -23,7 +23,7 @@ Lint, status, and navigation commands validate before returning records. JSON ar
 </failure_contract>
 
 <runtime_contract>
-TypeScript/JavaScript analysis is bundled. Python and Dart governed files require their runtimes on PATH; missing runtimes fail closed with actionable `analysis.runtime-missing` diagnostics instead of silently dropping parity checks.
+TypeScript/JavaScript analysis is bundled. Dart, Kotlin, Swift, and Vue governed files use in-process heuristic adapters and require no runtime on PATH. Python governed files require `python3`/`python` on PATH; a missing Python runtime fails closed with actionable `analysis.runtime-missing` diagnostics instead of silently dropping parity checks.
 </runtime_contract>
 
 <migration_boundary>GRACE 4 commands do not dual-validate legacy GRACE 3 docs. Use `grace-migrate`.</migration_boundary>

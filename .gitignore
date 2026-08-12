@@ -2,3 +2,7 @@ node_modules/
 !docs
 !AGENTS.md
 !CLAUDE.md
+
+# Local agent runtime state — never published
+.atelier/
+.grace/

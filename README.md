@@ -32,7 +32,7 @@ GRACE 4 does not dual-validate legacy GRACE 3 project docs as current state. Exi
 
 Verification commands run from the project root by default. A `V-M-*` entry may declare one contained project-relative `<Cwd>packages/example</Cwd>` while keeping `<TestFiles><File>...</File></TestFiles>` paths project-root-relative. Absolute paths, `..` escapes, and symlink escapes fail closed.
 
-TypeScript/JavaScript semantic analysis is bundled and compiler-backed. Governed Python and Dart files require their respective runtimes on `PATH`; Python export analysis is exact when a static `__all__` is present (including Unicode identifiers) and otherwise emits heuristic confidence. A missing runtime fails closed with actionable `analysis.runtime-missing`; an installed adapter that fails emits `analysis.adapter-failed`. Neither failure state is presented as exact `MODULE_MAP` parity.
+TypeScript/JavaScript semantic analysis is bundled and compiler-backed. Governed Python files use a runtime-backed adapter and require `python3`/`python` on `PATH`; Python export analysis is exact when a static `__all__` is present (including Unicode identifiers) and otherwise emits heuristic confidence. Governed Dart (`.dart`), Kotlin (`.kt`, `.kts`), Swift (`.swift`), and Vue (`.vue`) files use in-process heuristic adapters and need no runtime on `PATH`; their `MODULE_MAP` mismatches surface as `analysis.heuristic-map-mismatch` warnings rather than `markup.module-map-mismatch` errors. A missing Python runtime fails closed with actionable `analysis.runtime-missing`; an installed adapter that fails emits `analysis.adapter-failed`. Neither failure state is presented as exact `MODULE_MAP` parity.
 
 ## Install
 

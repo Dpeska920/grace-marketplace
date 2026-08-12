@@ -196,9 +196,20 @@ export async function runPackedCliSmoke(repoRoot: string): Promise<void> {
     writePythonProject(pythonProject);
     runtimeCheck("Python", pythonProject, runtimeState(["python3", "python"]));
 
+    // Dart analysis runs fully in-process (no dart binary invocation), so unlike
+    // Python it has no runtime-missing/broken state to model — it must lint
+    // cleanly through the packed CLI regardless of whether `dart` is on PATH.
     const dartProject = path.join(tempRoot, "dart-project");
     writeDartProject(dartProject);
-    runtimeCheck("Dart", dartProject, runtimeState(["dart"]));
+    const dartResult = spawnSync(process.execPath, [cliEntry, "lint", "--path", dartProject, "--assertions", "current", "--format", "json"], {
+      cwd: consumer,
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    const dartOutput = dartResult.stdout ?? "";
+    if (dartResult.status !== 0 || dartOutput.includes("analysis.adapter-failed") || dartOutput.includes("analysis.runtime-missing")) {
+      throw new Error(`Dart in-process analysis failed without a runtime dependency: ${dartOutput} ${dartResult.stderr}`);
+    }
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
