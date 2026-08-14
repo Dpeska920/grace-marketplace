@@ -135,6 +135,50 @@ function looksLikeEvidenceEmission(line: string) {
   return /(console\.|logger\.|tracer\.|trace\s*\(|emit\s*\(|\.(info|warn|error|debug|trace)\s*\()/.test(line);
 }
 
+/**
+ * Joins physical source lines into logical ones by parenthesis balance, so a
+ * multi-line call (e.g. prettier-wrapped `logger.info(...)`) is seen as one
+ * unit even when its marker literal lands on its own line. Parenthesis depth
+ * is counted on the quote-stripped text so bracket characters that happen to
+ * sit inside a string literal (a marker itself often reads `[A][b][BLOCK_C]`)
+ * never open or close a logical line. A comment-only physical line starting a
+ * fresh logical line is kept on its own so a commented-out call never merges
+ * with real code around it.
+ */
+function buildLogicalLines(text: string): string[] {
+  const physicalLines = text.split("\n");
+  const strippedLines = stripQuotedStrings(text).split("\n");
+  const logicalLines: string[] = [];
+  let buffer: string[] = [];
+  let depth = 0;
+
+  for (let i = 0; i < physicalLines.length; i++) {
+    const line = physicalLines[i] ?? "";
+
+    if (buffer.length === 0 && isCommentOnlyLine(line)) {
+      logicalLines.push(line);
+      continue;
+    }
+
+    buffer.push(line);
+    for (const char of strippedLines[i] ?? "") {
+      if (char === "(") depth++;
+      else if (char === ")") depth = Math.max(0, depth - 1);
+    }
+
+    if (depth === 0) {
+      logicalLines.push(buffer.join(" "));
+      buffer = [];
+    }
+  }
+
+  if (buffer.length > 0) {
+    logicalLines.push(buffer.join(" "));
+  }
+
+  return logicalLines;
+}
+
 /** Extracts the semantic block name encoded at the end of a required log marker. */
 export function parseMarkerBlockName(marker: string) {
   const match = marker.match(/\[([^\]]+)\]\s*$/);
@@ -147,7 +191,7 @@ export function parseMarkerBlockName(marker: string) {
  * names such as marker$ distinct from marker$Other.
  */
 export function hasRuntimeMarkerEvidence(text: string, marker: string) {
-  const lines = text.split("\n");
+  const lines = buildLogicalLines(text);
   if (lines.some((line) => !isCommentOnlyLine(line) && line.includes(marker) && looksLikeEvidenceEmission(line))) {
     return true;
   }

@@ -112,6 +112,30 @@ export const value = true;
     expect(hasRuntimeMarkerEvidence(`// const marker$ = "${marker}";\nconsole.info(marker$ + " ok");`, marker)).toBe(false);
   });
 
+  it("credits a marker split across a multi-line runtime call by bracket balance", () => {
+    const marker = "[Config][resolveChains][BLOCK_DROP_EMPTY_PROVIDERS]";
+
+    expect(hasRuntimeMarkerEvidence(`logger.info({ chainType, provider: name }, "${marker} dropped");`, marker)).toBe(true);
+
+    expect(
+      hasRuntimeMarkerEvidence(
+        `logger.info(\n  { chainType, provider: name },\n  '${marker} dropped provider with empty credentials',\n);`,
+        marker,
+      ),
+    ).toBe(true);
+
+    expect(
+      hasRuntimeMarkerEvidence(
+        `// logger.info(\n//   { chainType, provider: name },\n//   '${marker} dropped provider with empty credentials',\n// );`,
+        marker,
+      ),
+    ).toBe(false);
+
+    expect(
+      hasRuntimeMarkerEvidence(`const MARKER = '${marker}';\nlogger.info(\n  { chainType },\n  MARKER,\n);`, marker),
+    ).toBe(true);
+  });
+
   it("emits bounded-confidence diagnostics for heuristic Python analysis", () => {
     const hasPython = ["python3", "python"].some((binary) => {
       const result = spawnSync(binary, ["--version"], { stdio: "ignore" });
