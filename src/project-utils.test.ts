@@ -136,6 +136,27 @@ export const value = true;
     ).toBe(true);
   });
 
+  it("does not let a stray apostrophe in comment prose desync marker credit", () => {
+    const marker = "[Db][migrate][BLOCK_APPLY_MIGRATIONS]";
+    const proseComment = "// note: the driver's connection pool caches sessions across retries";
+
+    expect(
+      hasRuntimeMarkerEvidence(
+        `${proseComment}\nlogger.info(\n  { migration: name },\n  '${marker} applied',\n);`,
+        marker,
+      ),
+    ).toBe(true);
+
+    expect(hasRuntimeMarkerEvidence(`${proseComment}\nlogger.info('${marker} applied');`, marker)).toBe(true);
+
+    expect(
+      hasRuntimeMarkerEvidence(
+        `// it's worth noting: logger.info(\n//   '${marker} applied',\n// );`,
+        marker,
+      ),
+    ).toBe(false);
+  });
+
   it("emits bounded-confidence diagnostics for heuristic Python analysis", () => {
     const hasPython = ["python3", "python"].some((binary) => {
       const result = spawnSync(binary, ["--version"], { stdio: "ignore" });

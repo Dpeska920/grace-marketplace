@@ -136,35 +136,58 @@ function looksLikeEvidenceEmission(line: string) {
 }
 
 /**
+ * Blanks the content of whole-line comments before quote analysis. stripQuotedStrings
+ * tracks quote parity as one continuous scan across the entire file; it has no notion
+ * of `//` comments, so a stray apostrophe in English prose ("the file's bytes") flips
+ * that parity and desyncs quote-stripping for every line that follows, however far
+ * away. Neutralizing comment-only lines first keeps their prose out of the automaton
+ * entirely, so it never has anything to desync from.
+ */
+function blankCommentOnlyLines(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => (isCommentOnlyLine(line) ? " ".repeat(line.length) : line))
+    .join("\n");
+}
+
+function parenDepth(strippedText: string): number {
+  let depth = 0;
+  for (const char of strippedText) {
+    if (char === "(") depth++;
+    else if (char === ")") depth = Math.max(0, depth - 1);
+  }
+  return depth;
+}
+
+/**
  * Joins physical source lines into logical ones by parenthesis balance, so a
  * multi-line call (e.g. prettier-wrapped `logger.info(...)`) is seen as one
  * unit even when its marker literal lands on its own line. Parenthesis depth
- * is counted on the quote-stripped text so bracket characters that happen to
- * sit inside a string literal (a marker itself often reads `[A][b][BLOCK_C]`)
- * never open or close a logical line. A comment-only physical line starting a
- * fresh logical line is kept on its own so a commented-out call never merges
- * with real code around it.
+ * is measured by re-running quote-stripping on the buffer accumulated so far
+ * for the *current* logical line only, rather than once over the whole file.
+ * stripQuotedStrings has no notion of `//` comments or regex literals, so a
+ * lone apostrophe anywhere — English prose ("the file's bytes"), a SQL-quote
+ * regex (`'(?:''|[^'])*'`) — flips its quote parity; a single continuous scan
+ * lets that corruption drift into every following statement, however far
+ * away. Restarting the scan at each completed logical line contains a flip to
+ * the statement it occurred in. Comment-only lines are blanked before the
+ * scan so their prose apostrophes cannot even corrupt that one statement, and
+ * a comment-only line starting a fresh logical line is kept on its own,
+ * verbatim, so a commented-out call never merges with real code around it.
  */
 function buildLogicalLines(text: string): string[] {
   const physicalLines = text.split("\n");
-  const strippedLines = stripQuotedStrings(text).split("\n");
   const logicalLines: string[] = [];
   let buffer: string[] = [];
-  let depth = 0;
 
-  for (let i = 0; i < physicalLines.length; i++) {
-    const line = physicalLines[i] ?? "";
-
+  for (const line of physicalLines) {
     if (buffer.length === 0 && isCommentOnlyLine(line)) {
       logicalLines.push(line);
       continue;
     }
 
     buffer.push(line);
-    for (const char of strippedLines[i] ?? "") {
-      if (char === "(") depth++;
-      else if (char === ")") depth = Math.max(0, depth - 1);
-    }
+    const depth = parenDepth(stripQuotedStrings(blankCommentOnlyLines(buffer.join("\n"))));
 
     if (depth === 0) {
       logicalLines.push(buffer.join(" "));
