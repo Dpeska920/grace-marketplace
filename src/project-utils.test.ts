@@ -206,6 +206,47 @@ export const value = true;
     ).toBe(true);
   });
 
+  it("credits Flutter's bare debugPrint, including its multi-line form", () => {
+    const marker = "[Shared][ReportsCubit][BLOCK_PERIOD_RESOLVE]";
+
+    expect(hasRuntimeMarkerEvidence(`debugPrint('${marker} periods=\${periods.length}');`, marker)).toBe(true);
+
+    expect(
+      hasRuntimeMarkerEvidence(
+        `debugPrint(\n  '${marker} periods=\${periods.length}',\n);`,
+        marker,
+      ),
+    ).toBe(true);
+
+    expect(hasRuntimeMarkerEvidence(`// debugPrint('${marker} periods=\${periods.length}');`, marker)).toBe(false);
+  });
+
+  it("credits dart:developer's developer.log(...) as the specific conventional pair", () => {
+    const marker = "[Shared][PadTestSessionController][BLOCK_PAD_TEST_SESSION]";
+
+    expect(
+      hasRuntimeMarkerEvidence(
+        `developer.log(\n  '${marker} start id=\$id',\n  name: 'PadTestSessionController',\n);`,
+        marker,
+      ),
+    ).toBe(true);
+
+    expect(hasRuntimeMarkerEvidence(`developer.log('${marker} start');`, marker)).toBe(true);
+
+    expect(hasRuntimeMarkerEvidence(`// developer.log('${marker} start');`, marker)).toBe(false);
+
+    // Just outside the specific pair: a differently named receiver calling
+    // .log(, or `developer` calling a different method, must not be credited
+    // by a relaxed lowercase-receiver rule that was deliberately not added.
+    expect(hasRuntimeMarkerEvidence(`dev.log('${marker} start');`, marker)).toBe(false);
+    expect(hasRuntimeMarkerEvidence(`developer.record('${marker} start');`, marker)).toBe(false);
+  });
+
+  it("does not credit bare print(...) as evidence emission", () => {
+    const marker = "[Shared][Scratch][BLOCK_DEBUG_DUMP]";
+    expect(hasRuntimeMarkerEvidence(`print('${marker} value=\$value');`, marker)).toBe(false);
+  });
+
   it("emits bounded-confidence diagnostics for heuristic Python analysis", () => {
     const hasPython = ["python3", "python"].some((binary) => {
       const result = spawnSync(binary, ["--version"], { stdio: "ignore" });

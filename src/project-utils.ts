@@ -146,8 +146,51 @@ function isCommentOnlyLine(line: string) {
  */
 const LOG_FACADE_CALL = /\b(?:Log|Logger|[A-Z][A-Za-z0-9_$]*(?:Log|Logger))\.(?:d|e|w|i|v|wtf|log)\s*\(/;
 
+/**
+ * Flutter's `debugPrint(...)` — a bare top-level function from the Flutter SDK,
+ * not a receiver-qualified call. `debugPrint` is a distinctive, framework-owned
+ * name (unlike the generic `print`, see below), so matching it bare carries
+ * negligible collision risk: a local symbol shadowing it would be unusual
+ * enough to notice on sight. The negative lookbehind keeps this to the bare
+ * call and excludes a receiver-qualified `.debugPrint(` some other class might
+ * happen to define, which is not the SDK function this pattern targets.
+ */
+const DEBUG_PRINT_CALL = /(?<!\.)\bdebugPrint\s*\(/;
+
+/**
+ * `dart:developer`'s `developer.log(...)`, matched as the exact conventional
+ * pair rather than by relaxing LOG_FACADE_CALL to accept lowercase receivers
+ * in general. `developer` is the import alias mandated by convention for
+ * `dart:developer` (`import 'dart:developer' as developer;`); residual risk
+ * is a local variable or object also named exactly `developer` exposing a
+ * `.log(...)` method of its own, which would be credited as evidence it
+ * isn't. That collision requires two independent, deliberate naming choices
+ * to coincide and is judged acceptable: even if it occurred, the line still
+ * contains a call literally named `log` on something literally named
+ * `developer`, so a false credit here is a false credit for something that
+ * reads exactly like the real thing.
+ */
+const DEVELOPER_LOG_CALL = /\bdeveloper\.log\s*\(/;
+
+// Bare `print(...)` is deliberately NOT treated as evidence emission. Unlike
+// `debugPrint`, `print` is dart:core's generic top-level name — far more
+// likely to be shadowed by a local function, a test double, or a method
+// with the same name reached without a receiver in scope, and it carries
+// none of debugPrint's framework-specific intent. The project this predicate
+// was extended for uses debugPrint 100 times and developer.log 6 times, but
+// print() zero times: there is no observed need pulling the boundary out
+// this far, and `avoid_print` is a standard Dart lint precisely because bare
+// print is discouraged as a durable, filterable logging primitive in the
+// first place. If a project starts relying on it for markers, that is a
+// deliberate future extension backed by its own census, not a default.
+
 function looksLikeEvidenceEmission(line: string) {
-  return /(console\.|logger\.|tracer\.|trace\s*\(|emit\s*\(|\.(info|warn|error|debug|trace)\s*\()/.test(line) || LOG_FACADE_CALL.test(line);
+  return (
+    /(console\.|logger\.|tracer\.|trace\s*\(|emit\s*\(|\.(info|warn|error|debug|trace)\s*\()/.test(line) ||
+    LOG_FACADE_CALL.test(line) ||
+    DEBUG_PRINT_CALL.test(line) ||
+    DEVELOPER_LOG_CALL.test(line)
+  );
 }
 
 /**
