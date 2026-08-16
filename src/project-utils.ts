@@ -19,6 +19,8 @@ export type FileListItem = {
   label: string;
   symbolName?: string;
   line: number;
+  /** True when a following physical line was folded into this item as a wrapped continuation. */
+  hasContinuation: boolean;
 };
 
 export type FileContractRecord = {
@@ -314,7 +316,15 @@ export function analyzeGovernedFile(root: string, filePath: string, text: string
   if (!contract) {
     issues.push(markupIssue("error", "markup.missing-module-contract", filePath, 1, "Governed files require one MODULE_CONTRACT section."));
   } else {
-    for (const field of ["PURPOSE", "SCOPE", "DEPENDS", "LINKS"]) {
+    // DEPENDS is deliberately not required here: grep -rn "fields.DEPENDS" src/
+    // finds no reader anywhere in this codebase besides the field-parsing
+    // itself, so a linter that requires it forces every governed file to fill
+    // it in with no feedback loop verifying accuracy. Measured on a real
+    // project: DEPENDS was present in 100% of governed files and wrong in
+    // 38.4% of them — worse than leaving it absent. Parsing support stays
+    // (parseFieldSection still captures it) for projects that want to author
+    // and check DEPENDS with their own tooling.
+    for (const field of ["PURPOSE", "SCOPE", "LINKS"]) {
       if (!contract.fields[field]?.trim()) {
         issues.push(markupIssue("error", "markup.missing-contract-field", filePath, contract.startLine, `MODULE_CONTRACT requires non-empty ${field}.`));
       }
@@ -333,8 +343,20 @@ export function analyzeGovernedFile(root: string, filePath: string, text: string
 
   const effectiveRole = role ?? inferRole(filePath);
   const effectiveMapMode = mapMode ?? defaultMapMode(effectiveRole);
-  if (role && mapMode && defaultMapMode(role) !== mapMode) {
-    issues.push(markupIssue("error", "markup.role-map-mode-mismatch", filePath, contract?.startLine ?? 1, `${role} files require MAP_MODE ${defaultMapMode(role)}, not ${mapMode}.`));
+  // skills/grace/grace-explainer/references/semantic-markup.md:31-45 calls the
+  // ROLE/MAP_MODE pairing "recommended defaults", not a required pairing —
+  // that made the code's prior behavior (rejecting any explicit MAP_MODE that
+  // diverged from ROLE's default as an error) stricter than the tool's own
+  // documentation promises. An explicit MAP_MODE now always overrides the
+  // ROLE-implied default (2026-08-16 owner decision): under that contract
+  // there is no remaining input where an explicit, diverging pairing is a
+  // mistake rather than an intentional override, so ROLE_MAP_MODE_OVERRIDE_ALLOWED
+  // stays permanently true. The check is kept — not deleted — at `warning`
+  // severity so a future policy that narrows the override again only has to
+  // flip this constant, not resurrect removed code.
+  const ROLE_MAP_MODE_OVERRIDE_ALLOWED = true;
+  if (role && mapMode && !ROLE_MAP_MODE_OVERRIDE_ALLOWED && defaultMapMode(role) !== mapMode) {
+    issues.push(markupIssue("warning", "markup.role-map-mode-mismatch", filePath, contract?.startLine ?? 1, `${role} files require MAP_MODE ${defaultMapMode(role)}, not ${mapMode}.`));
   }
   validateMapShape(filePath, record, effectiveMapMode, issues);
 
@@ -380,17 +402,60 @@ function parseFieldSection(section: TextSection | null): FileFieldSection | null
   return { fields, startLine: section.startLine, endLine: section.endLine };
 }
 
+/** One or more `/`- or `,`-separated identifiers, matching the `symbolName` extraction below. */
+const LIST_SYMBOL = "(?:[$_]|\\p{ID_Start})(?:[$_]|\\p{ID_Continue})*|default";
+const LIST_SYMBOL_HEAD = new RegExp(`^(?:[-*]\\s*)?(${LIST_SYMBOL})(?=\\s|$)`, "u");
+
+/**
+ * Matches a physical line that starts a new MODULE_MAP item rather than
+ * continuing the previous one: one or more `/`- or `,`-separated identifiers
+ * followed by a dash-delimited or colon-delimited description, an opening
+ * paren (e.g. `(private)`), or the end of the line (a bare symbol on its own
+ * line). Anchored at `^` on purpose — the unanchored form copied from
+ * validateMapShape's description check matched a dash or colon anywhere in a
+ * line, so ordinary prose containing either ("Re-exports the two…", "for
+ * downstream consumers to call directly.") was misread as a second item.
+ */
+const LIST_ITEM_HEAD = new RegExp(
+  `^(?:[-*]\\s+)?(?:${LIST_SYMBOL})(?:\\s*[/,]\\s*(?:${LIST_SYMBOL}))*(?:\\s+[-–—]\\s+|\\s*:\\s+|\\s*\\(|\\s*$)`,
+  "u",
+);
+
+/**
+ * Splits a MODULE_MAP section into items, one per declared symbol. Every
+ * physical line that is not itself a new item head (per LIST_ITEM_HEAD) is
+ * folded into the preceding item as a wrapped continuation instead of
+ * becoming its own phantom item — previously every non-empty physical line
+ * was read as a separate item, so prose wrapped for line length manufactured
+ * both spurious markup.summary-item-undescribed hits (the wrapped remainder
+ * rarely has its own "- "/": " description) and spurious
+ * markup.module-map-mismatch "extra" symbols (the remainder's first word
+ * parsed as an undeclared symbolName). The section's first non-empty line is
+ * always a head, even when it fails LIST_ITEM_HEAD itself, so a MODULE_MAP
+ * that opens with an un-structured paragraph still yields one item instead
+ * of none.
+ */
 function parseListSection(section: TextSection | null): FileListItem[] {
   if (!section) {
     return [];
   }
-  return section.content.split("\n")
-    .map((line, index) => {
-      const label = stripCommentPrefix(line).trim();
-      const symbolName = label.match(/^(?:[-*]\s*)?((?:[$_]|\p{ID_Start})(?:[$_]|\p{ID_Continue})*|default)(?=\s|$)/u)?.[1];
-      return { label, symbolName, line: section.startLine + index };
-    })
-    .filter((item) => item.label.length > 0);
+  const items: FileListItem[] = [];
+  section.content.split("\n").forEach((line, index) => {
+    const label = stripCommentPrefix(line).trim();
+    if (label.length === 0) {
+      return;
+    }
+
+    const previous = items.at(-1);
+    if (!previous || LIST_ITEM_HEAD.test(label)) {
+      const symbolName = label.match(LIST_SYMBOL_HEAD)?.[1];
+      items.push({ label, symbolName, line: section.startLine + 1 + index, hasContinuation: false });
+      return;
+    }
+
+    previous.hasContinuation = true;
+  });
+  return items;
 }
 
 function parseScopedFieldSections(text: string): FileContractRecord[] {
@@ -580,7 +645,13 @@ function validateMapShape(file: string, record: FileMarkupRecord, mapMode: MapMo
   }
   if (mapMode === "SUMMARY") {
     for (const item of record.moduleMap) {
-      if (!/(?:\s+-\s+|:\s+)\S/.test(item.label)) {
+      // A dash/colon description on the head line satisfies this directly.
+      // A wrapped continuation satisfies it too, even when the continuation
+      // itself carries no dash or colon (e.g. an indented sentence under a
+      // bare symbol line): the continuation's very existence is the
+      // description, and parseListSection already folded it into this item
+      // rather than reading it as an unrelated second item.
+      if (!/(?:\s+-\s+|:\s+)\S/.test(item.label) && !item.hasContinuation) {
         issues.push(markupIssue("error", "markup.summary-item-undescribed", file, item.line, `SUMMARY item '${item.label}' requires a description.`));
       }
     }
