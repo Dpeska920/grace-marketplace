@@ -1,7 +1,7 @@
 import { defineCommand } from "citty";
 
 import { findVerifications, loadGraceArtifactIndex, resolveVerification } from "./query/core";
-import { GraceCommandError, runQueryCommand } from "./query/errors";
+import { assertKnownArgs, GraceCommandError, runQueryCommand } from "./query/errors";
 import { formatVerificationFindTable, formatVerificationText } from "./query/render";
 import type { GraceArtifactIndex } from "./query/types";
 
@@ -19,6 +19,64 @@ function resolveFormat(format: unknown, json: unknown, allowed: string[], defaul
   return resolved;
 }
 
+const verificationFindArgs = {
+  query: {
+    type: "positional",
+    required: false,
+    description: "Search query",
+  },
+  path: {
+    type: "string",
+    alias: "p",
+    description: "Project root to inspect",
+    default: ".",
+  },
+  module: {
+    type: "string",
+    description: "Filter by module id or module name fragment",
+  },
+  priority: {
+    type: "string",
+    description: "Filter by verification priority",
+  },
+  format: {
+    type: "string",
+    alias: "f",
+    description: "Output format: table or json",
+    default: "table",
+  },
+  json: {
+    type: "boolean",
+    description: "Shortcut for --format json",
+    default: false,
+  },
+} as const;
+
+const verificationShowArgs = {
+  target: {
+    type: "positional",
+    required: false,
+    description: "Verification id or module target",
+  },
+  path: {
+    type: "string",
+    alias: "p",
+    description: "Project root to inspect",
+    default: ".",
+  },
+  format: {
+    type: "string",
+    alias: "f",
+    description: "Output format: text or json",
+    default: "text",
+  },
+  json: {
+    type: "boolean",
+    description: "Shortcut for --format json",
+    default: false,
+  },
+} as const;
+
 export const verificationCommand = defineCommand({
   meta: {
     name: "verification",
@@ -30,41 +88,11 @@ export const verificationCommand = defineCommand({
         name: "find",
         description: "Find verification entries by id, module, priority, scenarios, markers, or commands.",
       },
-      args: {
-        query: {
-          type: "positional",
-          required: false,
-          description: "Search query",
-        },
-        path: {
-          type: "string",
-          alias: "p",
-          description: "Project root to inspect",
-          default: ".",
-        },
-        module: {
-          type: "string",
-          description: "Filter by module id or module name fragment",
-        },
-        priority: {
-          type: "string",
-          description: "Filter by verification priority",
-        },
-        format: {
-          type: "string",
-          alias: "f",
-          description: "Output format: table or json",
-          default: "table",
-        },
-        json: {
-          type: "boolean",
-          description: "Shortcut for --format json",
-          default: false,
-        },
-      },
+      args: verificationFindArgs,
       async run(context) {
         const errorFormat = Boolean(context.args.json) || context.args.format === "json" ? "json" : "text";
         await runQueryCommand(errorFormat, () => {
+          assertKnownArgs(verificationFindArgs, context.args as Record<string, unknown>);
           const format = resolveFormat(context.args.format, context.args.json, ["table", "json"], "table");
           const index = loadGrace4IndexOrThrow(String(context.args.path ?? "."));
           const matches = findVerifications(index, {
@@ -81,33 +109,11 @@ export const verificationCommand = defineCommand({
         name: "show",
         description: "Show one verification entry by V-M id or module target.",
       },
-      args: {
-        target: {
-          type: "positional",
-          required: false,
-          description: "Verification id or module target",
-        },
-        path: {
-          type: "string",
-          alias: "p",
-          description: "Project root to inspect",
-          default: ".",
-        },
-        format: {
-          type: "string",
-          alias: "f",
-          description: "Output format: text or json",
-          default: "text",
-        },
-        json: {
-          type: "boolean",
-          description: "Shortcut for --format json",
-          default: false,
-        },
-      },
+      args: verificationShowArgs,
       async run(context) {
         const errorFormat = Boolean(context.args.json) || context.args.format === "json" ? "json" : "text";
         await runQueryCommand(errorFormat, () => {
+          assertKnownArgs(verificationShowArgs, context.args as Record<string, unknown>);
           const format = resolveFormat(context.args.format, context.args.json, ["text", "json"], "text");
           const index = loadGrace4IndexOrThrow(String(context.args.path ?? "."));
           const match = resolveVerification(index, context.args.target == null ? "" : String(context.args.target));

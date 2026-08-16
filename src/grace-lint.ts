@@ -5,7 +5,7 @@ import { defineCommand, type CommandDef, runMain } from "citty";
 import { formatLintExplanation, getLintIssueGuide } from "./lint/catalog";
 import { formatTextReport, isValidTextFormat, lintGraceProject } from "./lint/core";
 import type { LintAssertionMode, LintOptions, LintProfile, LintResult } from "./lint/types";
-import { GraceCommandError, runGraceCommand } from "./query/errors";
+import { assertKnownArgs, GraceCommandError, runGraceCommand } from "./query/errors";
 
 export type {
   GraceLintConfig,
@@ -70,66 +70,69 @@ function shouldFail(result: LintResult, failOn: string) {
   return result.summary.errors > 0;
 }
 
+const lintArgs = {
+  path: {
+    type: "string",
+    alias: "p",
+    description: "Project root to lint",
+    default: ".",
+  },
+  format: {
+    type: "string",
+    alias: "f",
+    description: "Output format: text or json",
+    default: "text",
+  },
+  profile: {
+    type: "string",
+    description: "Lint profile (currently only \`standard\` is supported)",
+    default: "standard",
+  },
+  explain: {
+    type: "string",
+    description: "Explain one lint issue code instead of linting a project",
+  },
+  remediate: {
+    type: "boolean",
+    description: "Include explanation and remediation hints in text output",
+    default: false,
+  },
+  failOn: {
+    type: "string",
+    description: "Exit policy: errors, warnings, or never",
+    default: "errors",
+  },
+  change: {
+    type: "string",
+    description: "Active C-* bundle selected for baseline or target assertion evaluation",
+  },
+  assertions: {
+    type: "string",
+    description: "Assertion mode: current (pre-write active baselines), baseline, target, or final",
+    default: "current",
+  },
+  runCommands: {
+    type: "boolean",
+    description: "Execute MustPassCommand assertions for the selected change",
+    default: false,
+  },
+  parallelPreflight: {
+    type: "boolean",
+    description: "Treat active-plan scope overlap as a parallel-execution blocker",
+    default: false,
+  },
+} as const;
+
 export const lintCommand = defineCommand({
   meta: {
     name: "lint",
     description: "Lint GRACE artifacts, XML tag conventions, semantic markup, and role-aware module maps.",
   },
-  args: {
-    path: {
-      type: "string",
-      alias: "p",
-      description: "Project root to lint",
-      default: ".",
-    },
-    format: {
-      type: "string",
-      alias: "f",
-      description: "Output format: text or json",
-      default: "text",
-    },
-    profile: {
-      type: "string",
-      description: "Lint profile (currently only \`standard\` is supported)",
-      default: "standard",
-    },
-    explain: {
-      type: "string",
-      description: "Explain one lint issue code instead of linting a project",
-    },
-    remediate: {
-      type: "boolean",
-      description: "Include explanation and remediation hints in text output",
-      default: false,
-    },
-    failOn: {
-      type: "string",
-      description: "Exit policy: errors, warnings, or never",
-      default: "errors",
-    },
-    change: {
-      type: "string",
-      description: "Active C-* bundle selected for baseline or target assertion evaluation",
-    },
-    assertions: {
-      type: "string",
-      description: "Assertion mode: current (pre-write active baselines), baseline, target, or final",
-      default: "current",
-    },
-    runCommands: {
-      type: "boolean",
-      description: "Execute MustPassCommand assertions for the selected change",
-      default: false,
-    },
-    parallelPreflight: {
-      type: "boolean",
-      description: "Treat active-plan scope overlap as a parallel-execution blocker",
-      default: false,
-    },
-  },
+  args: lintArgs,
   async run(context) {
     const errorFormat = context.args.format === "json" ? "json" : "text";
     await runGraceCommand(errorFormat, () => {
+      assertKnownArgs(lintArgs, context.args as Record<string, unknown>);
       const format = String(context.args.format ?? "text");
       const profile = resolveProfile(context.args.profile);
       const failOn = resolveFailOn(context.args.failOn);

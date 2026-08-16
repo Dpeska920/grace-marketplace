@@ -1,7 +1,7 @@
 import { defineCommand } from "citty";
 
 import { loadGraceArtifactIndex, resolveGovernedFile } from "./query/core";
-import { GraceCommandError, runQueryCommand } from "./query/errors";
+import { assertKnownArgs, GraceCommandError, runQueryCommand } from "./query/errors";
 import { formatFileText } from "./query/render";
 import type { GraceArtifactIndex } from "./query/types";
 
@@ -19,6 +19,41 @@ function resolveFormat(format: unknown, json: unknown) {
   return resolved;
 }
 
+const fileShowArgs = {
+  target: {
+    type: "positional",
+    required: false,
+    description: "Governed file path",
+  },
+  path: {
+    type: "string",
+    alias: "p",
+    description: "Project root to inspect",
+    default: ".",
+  },
+  contracts: {
+    type: "boolean",
+    description: "Include function/type/file-local contract details",
+    default: false,
+  },
+  blocks: {
+    type: "boolean",
+    description: "Include semantic block list",
+    default: false,
+  },
+  format: {
+    type: "string",
+    alias: "f",
+    description: "Output format: text or json",
+    default: "text",
+  },
+  json: {
+    type: "boolean",
+    description: "Shortcut for --format json",
+    default: false,
+  },
+} as const;
+
 export const fileCommand = defineCommand({
   meta: {
     name: "file",
@@ -30,43 +65,11 @@ export const fileCommand = defineCommand({
         name: "show",
         description: "Show file-local MODULE_CONTRACT, MODULE_MAP, CHANGE_SUMMARY, contracts, and blocks.",
       },
-      args: {
-        target: {
-          type: "positional",
-          required: false,
-          description: "Governed file path",
-        },
-        path: {
-          type: "string",
-          alias: "p",
-          description: "Project root to inspect",
-          default: ".",
-        },
-        contracts: {
-          type: "boolean",
-          description: "Include function/type/file-local contract details",
-          default: false,
-        },
-        blocks: {
-          type: "boolean",
-          description: "Include semantic block list",
-          default: false,
-        },
-        format: {
-          type: "string",
-          alias: "f",
-          description: "Output format: text or json",
-          default: "text",
-        },
-        json: {
-          type: "boolean",
-          description: "Shortcut for --format json",
-          default: false,
-        },
-      },
+      args: fileShowArgs,
       async run(context) {
         const errorFormat = Boolean(context.args.json) || context.args.format === "json" ? "json" : "text";
         await runQueryCommand(errorFormat, () => {
+          assertKnownArgs(fileShowArgs, context.args as Record<string, unknown>);
           const format = resolveFormat(context.args.format, context.args.json);
           const index = loadGrace4IndexOrThrow(String(context.args.path ?? "."));
           const fileRecord = resolveGovernedFile(index, context.args.target == null ? "" : String(context.args.target));

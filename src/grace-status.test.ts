@@ -400,6 +400,25 @@ describe("grace status", () => {
     expect(parsed.summary.graphModules).toBe(1);
   });
 
+  it("rejects an unknown flag on the status command instead of silently ignoring it", () => {
+    const root = createProject();
+    writeMinimalGrace4Project(root);
+    const repoRoot = path.resolve(import.meta.dir, "..");
+
+    const typo = Bun.spawnSync({
+      cmd: [process.execPath, "./src/grace.ts", "status", "--path", root, "--wiht", "modules", "--json"],
+      cwd: repoRoot,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(typo.exitCode).not.toBe(0);
+    expect(JSON.parse(Buffer.from(typo.stdout).toString("utf8"))).toEqual(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining({ code: "invalid-arguments", message: expect.stringContaining("--wiht") }),
+    }));
+  });
+
   it("returns structured JSON for invalid options and missing paths without stack traces", () => {
     const repoRoot = path.resolve(import.meta.dir, "..");
     const invalid = Bun.spawnSync({

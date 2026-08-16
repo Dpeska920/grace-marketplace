@@ -12,7 +12,7 @@ import { collectActiveChangeScopes, createDurableOwnershipIndex, detectScopeOver
 import { readGraceXmlArtifact } from "./grace4/xml";
 import { collectModuleHealth } from "./query/health";
 import { loadGraceArtifactIndex } from "./query/core";
-import { GraceCommandError, runGraceCommand } from "./query/errors";
+import { assertKnownArgs, GraceCommandError, runGraceCommand } from "./query/errors";
 import { formatModuleHealthTable } from "./query/render";
 import type { ModuleHealthRecord } from "./query/types";
 
@@ -495,21 +495,24 @@ function shouldFail(result: StatusResult, failOn: string) {
   return errorCount > 0;
 }
 
+const statusArgs = {
+  path: { type: "string", alias: "p", description: "Project root to inspect", default: "." },
+  format: { type: "string", alias: "f", description: "Output format: text or json", default: "text" },
+  json: { type: "boolean", description: "Shortcut for --format json", default: false },
+  with: { type: "string", description: "Optional extras, currently supports: modules", default: "" },
+  failOn: { type: "string", description: "Exit policy: never, errors, or warnings", default: "never" },
+} as const;
+
 export const statusCommand = defineCommand({
   meta: {
     name: "status",
     description: "Show GRACE 4 durable health, active/archive changes, derived states, and next action.",
   },
-  args: {
-    path: { type: "string", alias: "p", description: "Project root to inspect", default: "." },
-    format: { type: "string", alias: "f", description: "Output format: text or json", default: "text" },
-    json: { type: "boolean", description: "Shortcut for --format json", default: false },
-    with: { type: "string", description: "Optional extras, currently supports: modules", default: "" },
-    failOn: { type: "string", description: "Exit policy: never, errors, or warnings", default: "never" },
-  },
+  args: statusArgs,
   async run(context) {
     const errorFormat = Boolean(context.args.json) || context.args.format === "json" ? "json" : "text";
     await runGraceCommand(errorFormat, () => {
+      assertKnownArgs(statusArgs, context.args as Record<string, unknown>);
       const format = resolveFormat(context.args.format, context.args.json);
       const withValues = resolveWithList(context.args.with);
       const failOn = resolveFailOn(context.args.failOn);

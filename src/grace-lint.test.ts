@@ -178,6 +178,62 @@ describe("lintGraceProject", () => {
     expect(parsed.summary.errors).toBe(0);
   });
 
+  it("rejects an unknown flag instead of silently defaulting the mode it was meant to override", () => {
+    // Regression for grace-cli-diagnosis.md §7: `--assertion` (missing the
+    // trailing s) used to fall through to node:util.parseArgs' strict:false
+    // handling, leave `assertions` on its default `current`, and report
+    // `Errors: 0` on a bundle whose TargetAssertions is a guaranteed-failing
+    // MustPassCommand. The typo must now be rejected before the assertion
+    // mode is ever resolved.
+    const root = createProject();
+    writeMinimalGrace4Project(root);
+    writeApprovedChange(
+      root,
+      "C-GATE",
+      "<MustExist><Value>M-EXAMPLE</Value></MustExist>",
+      "<MustPassCommand><Command>false</Command></MustPassCommand>",
+    );
+    const repoRoot = path.resolve(import.meta.dir, "..");
+
+    const typo = Bun.spawnSync({
+      cmd: [process.execPath, "./src/grace.ts", "lint", "--path", root, "--change", "C-GATE", "--assertion", "target", "--run-commands", "--format", "json"],
+      cwd: repoRoot,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(typo.exitCode).not.toBe(0);
+    expect(JSON.parse(Buffer.from(typo.stdout).toString("utf8"))).toEqual(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining({ code: "invalid-arguments", message: expect.stringContaining("--assertion") }),
+    }));
+
+    const correct = Bun.spawnSync({
+      cmd: [process.execPath, "./src/grace.ts", "lint", "--path", root, "--change", "C-GATE", "--assertions", "target", "--run-commands", "--format", "json"],
+      cwd: repoRoot,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(correct.exitCode).not.toBe(0);
+    const correctResult = JSON.parse(Buffer.from(correct.stdout).toString("utf8"));
+    expect(correctResult.issues.map((issue: { code: string }) => issue.code)).toContain("assertion.MustPassCommand");
+  });
+
+  it("accepts the kebab-case spelling citty derives for every camelCase flag", () => {
+    const root = createProject();
+    writeMinimalGrace4Project(root);
+    const repoRoot = path.resolve(import.meta.dir, "..");
+
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, "./src/grace.ts", "lint", "--path", root, "--fail-on", "warnings", "--format", "json"],
+      cwd: repoRoot,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(Buffer.from(result.stdout).toString("utf8")).tool).toBe("grace-lint");
+  });
+
   it("returns structured JSON for invalid options and missing project paths without stack traces", () => {
     const repoRoot = path.resolve(import.meta.dir, "..");
     const invalid = Bun.spawnSync({

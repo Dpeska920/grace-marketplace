@@ -1,7 +1,7 @@
 import { defineCommand } from "citty";
 
 import { findModules, loadGraceArtifactIndex, resolveModule } from "./query/core";
-import { GraceCommandError, runQueryCommand } from "./query/errors";
+import { assertKnownArgs, GraceCommandError, runQueryCommand } from "./query/errors";
 import { buildModuleHealth, resolveModuleHealth } from "./query/health";
 import { formatModuleFindTable, formatModuleHealthText, formatModuleText } from "./query/render";
 import type { GraceArtifactIndex } from "./query/types";
@@ -20,6 +20,94 @@ function resolveFormat(format: unknown, json: unknown, allowed: string[], defaul
   return resolved;
 }
 
+const moduleFindArgs = {
+  query: {
+    type: "positional",
+    required: false,
+    description: "Search query or path",
+  },
+  path: {
+    type: "string",
+    alias: "p",
+    description: "Project root to inspect",
+    default: ".",
+  },
+  type: {
+    type: "string",
+    description: "Filter by module type",
+  },
+  dependsOn: {
+    type: "string",
+    description: "Filter by dependency id",
+  },
+  format: {
+    type: "string",
+    alias: "f",
+    description: "Output format: table or json",
+    default: "table",
+  },
+  json: {
+    type: "boolean",
+    description: "Shortcut for --format json",
+    default: false,
+  },
+} as const;
+
+const moduleShowArgs = {
+  target: {
+    type: "positional",
+    required: false,
+    description: "Module id or file/path target",
+  },
+  path: {
+    type: "string",
+    alias: "p",
+    description: "Project root to inspect",
+    default: ".",
+  },
+  with: {
+    type: "string",
+    description: "Optional extras, currently supports: verification",
+    default: "",
+  },
+  format: {
+    type: "string",
+    alias: "f",
+    description: "Output format: text or json",
+    default: "text",
+  },
+  json: {
+    type: "boolean",
+    description: "Shortcut for --format json",
+    default: false,
+  },
+} as const;
+
+const moduleHealthArgs = {
+  target: {
+    type: "positional",
+    required: false,
+    description: "Module id or file/path target",
+  },
+  path: {
+    type: "string",
+    alias: "p",
+    description: "Project root to inspect",
+    default: ".",
+  },
+  format: {
+    type: "string",
+    alias: "f",
+    description: "Output format: text or json",
+    default: "text",
+  },
+  json: {
+    type: "boolean",
+    description: "Shortcut for --format json",
+    default: false,
+  },
+} as const;
+
 export const moduleCommand = defineCommand({
   meta: {
     name: "module",
@@ -31,41 +119,11 @@ export const moduleCommand = defineCommand({
         name: "find",
         description: "Find GRACE modules by id, name, path, purpose, annotations, verification, or dependencies.",
       },
-      args: {
-        query: {
-          type: "positional",
-          required: false,
-          description: "Search query or path",
-        },
-        path: {
-          type: "string",
-          alias: "p",
-          description: "Project root to inspect",
-          default: ".",
-        },
-        type: {
-          type: "string",
-          description: "Filter by module type",
-        },
-        dependsOn: {
-          type: "string",
-          description: "Filter by dependency id",
-        },
-        format: {
-          type: "string",
-          alias: "f",
-          description: "Output format: table or json",
-          default: "table",
-        },
-        json: {
-          type: "boolean",
-          description: "Shortcut for --format json",
-          default: false,
-        },
-      },
+      args: moduleFindArgs,
       async run(context) {
         const errorFormat = Boolean(context.args.json) || context.args.format === "json" ? "json" : "text";
         await runQueryCommand(errorFormat, () => {
+          assertKnownArgs(moduleFindArgs, context.args as Record<string, unknown>);
           const format = resolveFormat(context.args.format, context.args.json, ["table", "json"], "table");
           const index = loadGrace4IndexOrThrow(String(context.args.path ?? "."));
           const matches = findModules(index, {
@@ -82,38 +140,11 @@ export const moduleCommand = defineCommand({
         name: "show",
         description: "Show the shared/public GRACE record for a module id or path.",
       },
-      args: {
-        target: {
-          type: "positional",
-          required: false,
-          description: "Module id or file/path target",
-        },
-        path: {
-          type: "string",
-          alias: "p",
-          description: "Project root to inspect",
-          default: ".",
-        },
-        with: {
-          type: "string",
-          description: "Optional extras, currently supports: verification",
-          default: "",
-        },
-        format: {
-          type: "string",
-          alias: "f",
-          description: "Output format: text or json",
-          default: "text",
-        },
-        json: {
-          type: "boolean",
-          description: "Shortcut for --format json",
-          default: false,
-        },
-      },
+      args: moduleShowArgs,
       async run(context) {
         const errorFormat = Boolean(context.args.json) || context.args.format === "json" ? "json" : "text";
         await runQueryCommand(errorFormat, () => {
+          assertKnownArgs(moduleShowArgs, context.args as Record<string, unknown>);
           const format = resolveFormat(context.args.format, context.args.json, ["text", "json"], "text");
           const index = loadGrace4IndexOrThrow(String(context.args.path ?? "."));
           const moduleRecord = resolveModule(index, context.args.target == null ? "" : String(context.args.target));
@@ -132,33 +163,11 @@ export const moduleCommand = defineCommand({
         name: "health",
         description: "Show health, autonomy readiness, and remediation hints for one module.",
       },
-      args: {
-        target: {
-          type: "positional",
-          required: false,
-          description: "Module id or file/path target",
-        },
-        path: {
-          type: "string",
-          alias: "p",
-          description: "Project root to inspect",
-          default: ".",
-        },
-        format: {
-          type: "string",
-          alias: "f",
-          description: "Output format: text or json",
-          default: "text",
-        },
-        json: {
-          type: "boolean",
-          description: "Shortcut for --format json",
-          default: false,
-        },
-      },
+      args: moduleHealthArgs,
       async run(context) {
         const errorFormat = Boolean(context.args.json) || context.args.format === "json" ? "json" : "text";
         await runQueryCommand(errorFormat, () => {
+          assertKnownArgs(moduleHealthArgs, context.args as Record<string, unknown>);
           const format = resolveFormat(context.args.format, context.args.json, ["text", "json"], "text");
           const index = loadGrace4IndexOrThrow(String(context.args.path ?? "."));
           const health = resolveModuleHealth(index, context.args.target == null ? "" : String(context.args.target));

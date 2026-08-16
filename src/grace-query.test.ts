@@ -564,6 +564,35 @@ const marker$Other = "[ProviderConfigPersistence][getProviderConfig][other]";`,
     expect(Buffer.from(healthResult.stdout).toString("utf8")).toContain("State: ready");
   });
 
+  it("rejects an unknown flag on every module, verification, and file subcommand", () => {
+    const root = createQueryProject();
+    const repoRoot = path.resolve(import.meta.dir, "..");
+
+    const cases: Array<string[]> = [
+      ["module", "find", "--path", root, "--jsonn"],
+      ["module", "show", "M-PROVIDER-PERSIST", "--path", root, "--withh", "verification"],
+      ["module", "health", "M-PROVIDER-PERSIST", "--path", root, "--formatt", "json"],
+      ["verification", "find", "--path", root, "--modulee", "M-PROVIDER-PERSIST"],
+      ["verification", "show", "V-M-PROVIDER-PERSIST", "--path", root, "--jsonn"],
+      ["file", "show", "src/provider/config-repo.ts", "--path", root, "--contract"],
+    ];
+
+    for (const args of cases) {
+      const result = Bun.spawnSync({
+        cmd: [process.execPath, "./src/grace.ts", ...args, "--json"],
+        cwd: repoRoot,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(result.exitCode).not.toBe(0);
+      const stdout = Buffer.from(result.stdout).toString("utf8").trim();
+      const envelope = stdout ? JSON.parse(stdout) : null;
+      const errorCode = envelope?.error?.code
+        ?? (Buffer.from(result.stderr).toString("utf8").includes("Unknown argument") ? "invalid-arguments" : undefined);
+      expect(errorCode).toBe("invalid-arguments");
+    }
+  });
+
   it("emits migration guidance for GRACE 3 roots instead of falling back to legacy docs", () => {
     const root = createProject();
     writeProjectFile(root, "docs/development-plan.xml", `<DevelopmentPlan />`);
