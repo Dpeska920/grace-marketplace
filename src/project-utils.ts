@@ -133,8 +133,21 @@ function isCommentOnlyLine(line: string) {
   return /^\s*(\/\/|#|--|;+|\*)/.test(line);
 }
 
+/**
+ * Matches a call through a conventional logger facade class — a capitalized
+ * identifier ending in `Log` or `Logger` (`Log`, `AppLog`, `Logger`, `MyLogger`)
+ * — using one of that facade's short, single-letter-style methods (Android's
+ * `android.util.Log.d/e/w/i/v/wtf`, or the generic `.log(`). The receiver name
+ * is load-bearing: without it, a one-letter method name is far too common on
+ * unrelated classes (`list.d(`, `matrix.i(`) to serve as evidence on its own.
+ * Deliberately NOT matched: a lowercase or unrelated receiver (`foo.d(`), and
+ * any facade method outside this fixed list (`Log.custom(`) — precision over
+ * catching one more shape.
+ */
+const LOG_FACADE_CALL = /\b(?:Log|Logger|[A-Z][A-Za-z0-9_$]*(?:Log|Logger))\.(?:d|e|w|i|v|wtf|log)\s*\(/;
+
 function looksLikeEvidenceEmission(line: string) {
-  return /(console\.|logger\.|tracer\.|trace\s*\(|emit\s*\(|\.(info|warn|error|debug|trace)\s*\()/.test(line);
+  return /(console\.|logger\.|tracer\.|trace\s*\(|emit\s*\(|\.(info|warn|error|debug|trace)\s*\()/.test(line) || LOG_FACADE_CALL.test(line);
 }
 
 /**

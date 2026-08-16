@@ -191,6 +191,21 @@ export const value = true;
     ).toBe(false);
   });
 
+  it("credits a Log-facade call with a single-letter method name", () => {
+    const marker = "[AiGateway][onRequest][BLOCK_SIGNED]";
+
+    expect(hasRuntimeMarkerEvidence(`Log.d('${marker} signature attached');`, marker)).toBe(true);
+    expect(hasRuntimeMarkerEvidence(`Log.w('${marker} calibration rejected');`, marker)).toBe(true);
+
+    expect(hasRuntimeMarkerEvidence(`// Log.d('${marker} signature attached');`, marker)).toBe(false);
+
+    expect(hasRuntimeMarkerEvidence(`foo.d('${marker} signature attached');`, marker)).toBe(false);
+
+    expect(
+      hasRuntimeMarkerEvidence(`const MARKER = '${marker}';\nLog.d(MARKER);`, marker),
+    ).toBe(true);
+  });
+
   it("emits bounded-confidence diagnostics for heuristic Python analysis", () => {
     const hasPython = ["python3", "python"].some((binary) => {
       const result = spawnSync(binary, ["--version"], { stdio: "ignore" });
