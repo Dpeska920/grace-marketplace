@@ -54,4 +54,12 @@ describe("checkModuleCheckReferences", () => {
   test("returns true when all testFiles are referenced across multiple checks", () => {
     expect(checkModuleCheckReferences(["src/auth.test.ts", "src/session.test.ts"], ["bun test src/auth.test.ts src/session.test.ts"])).toBe(true);
   });
+
+  test("subtree directory target covers tests in nested directories", () => {
+    expect(checkModuleCheckReferences(["src/case/__tests__/a.test.ts"], ["bun test src/case/"])).toBe(true);
+  });
+
+  test("subtree directory target does not cover sibling directories with shared prefix", () => {
+    expect(checkModuleCheckReferences(["src/case-other/a.test.ts"], ["bun test src/case/"])).toBe(false);
+  });
 });

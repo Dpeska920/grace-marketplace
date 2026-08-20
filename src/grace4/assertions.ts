@@ -215,9 +215,16 @@ function evaluateMustPassCommand(assertion: GraceAssertion, context: AssertionCo
   }
 
   return assertion.values.flatMap((command) => {
+    // POSIX contract: assertions must run under a deterministic POSIX shell.
+    // Never use $SHELL or a login shell (-l): user rc files and shells like
+    // zsh (no SH_WORD_SPLIT) change command semantics per machine.
+    // GRACE_ASSERT_SHELL is an explicit opt-out for special cases.
+    const shellOverride = process.env.GRACE_ASSERT_SHELL?.trim();
     const shellCommand = process.platform === "win32"
       ? ["cmd.exe", "/d", "/s", "/c", command]
-      : [process.env.SHELL || "sh", "-lc", command];
+      : shellOverride
+        ? [shellOverride, "-c", command]
+        : ["sh", "-c", command];
     const result = Bun.spawnSync({
       cmd: shellCommand,
       cwd: context.root,

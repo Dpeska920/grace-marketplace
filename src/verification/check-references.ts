@@ -47,9 +47,16 @@ export function checkModuleCheckReferences(
         return false;
       }
       const tokens = normalizedCheck.split(/\s+/);
-      return tokens.some(
-        (token) => token === dir || token === dir + "/",
-      );
+      return tokens.some((token) => {
+        if (token === dir || token === dir + "/") {
+          return true;
+        }
+        // Subtree target: a directory token with a trailing slash (e.g.
+        // "bun test src/case/") covers every test file underneath it,
+        // mirroring how test runners recurse into directory arguments
+        // ("src/case/__tests__/a.test.ts" but not "src/case-other/a.test.ts").
+        return token.endsWith("/") && token !== "/" && normalized.startsWith(token);
+      });
     });
 
     if (!found) {

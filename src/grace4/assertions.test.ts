@@ -100,6 +100,25 @@ describe("GRACE 4 assertions", () => {
     expect(evaluateAssertion(assertion("MustPassCommand", ["exit /b 0"]), { ...context(root), runCommands: true })).toHaveLength(0);
   });
 
+  (process.platform === "win32" ? it.skip : it)("executes commands through POSIX sh regardless of the caller's $SHELL", () => {
+    const root = createProject();
+    writeProjectionFixture(root);
+    // Word splitting: sh yields n=3; zsh without SH_WORD_SPLIT would yield 1.
+    // The assertion must pass on any machine, including ones where $SHELL=zsh.
+    const command = 'tgt=$(printf "a\\nb\\nc\\n"); n=0; for t in $tgt; do n=$((n+1)); done; test "$n" -eq 3';
+    const previousShell = process.env.SHELL;
+    process.env.SHELL = "/bin/zsh";
+    try {
+      expect(evaluateAssertion(assertion("MustPassCommand", [command]), { ...context(root), runCommands: true })).toHaveLength(0);
+    } finally {
+      if (previousShell === undefined) {
+        delete process.env.SHELL;
+      } else {
+        process.env.SHELL = previousShell;
+      }
+    }
+  });
+
   it("rejects missing, extra, duplicate, nested, and empty assertion fields", () => {
     const root = createProject();
     const planFile = path.join(root, "plan.xml");

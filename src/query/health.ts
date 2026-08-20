@@ -75,11 +75,8 @@ export function buildModuleHealth(index: GraceArtifactIndex, moduleRecord: Modul
       if (!existsSync(absolutePath)) {
         pushIssue(blockers, "error", "health.verification-test-file-missing-on-disk", `${entry.id} references ${testFile}, but that file does not exist.`, `Create ${testFile} or update ${entry.id}.`);
       }
-      if (!allChecksReferenceTestFiles) {
-        const dir = path.dirname(testFile);
-        if (!entry.moduleChecks.some((check) => check.includes(testFile) || check.includes(dir))) {
-          pushIssue(warnings, "warning", "health.verification-command-does-not-reference-test-file", `${entry.id} does not have a command that clearly targets ${testFile}.`, `Make at least one command reference ${testFile} or ${dir}.`);
-        }
+      if (!allChecksReferenceTestFiles && !checkModuleCheckReferences([testFile], entry.moduleChecks, entry.cwd)) {
+        pushIssue(warnings, "warning", "health.verification-command-does-not-reference-test-file", `${entry.id} does not have a command that clearly targets ${testFile}.`, `Make at least one command reference ${testFile} or a directory covering it.`);
       }
     }
 

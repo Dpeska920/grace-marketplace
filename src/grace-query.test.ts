@@ -273,6 +273,31 @@ describe("grace query core", () => {
     expect(health.blockers.map((blocker) => blocker.code)).not.toContain("health.verification-test-file-missing-on-disk");
   });
 
+  it("does not warn when a subtree command target covers nested test files", () => {
+    const root = createProject();
+    writeProjectSkeleton(root);
+    writeProjectFile(root, ".grace/graph/index.xml", '<GraceGraphIndex graceVersion="4.0"><GraphDocuments><GD-MAIN><Path>graph/main.xml</Path><Owns><M-CASE /><M-CASE-OTHER /></Owns></GD-MAIN></GraphDocuments></GraceGraphIndex>');
+    writeProjectFile(root, ".grace/graph/main.xml", '<GraceGraphDocument graceVersion="4.0"><GD-MAIN><M-CASE><Summary>Case subtree module.</Summary></M-CASE><M-CASE-OTHER><Summary>Sibling module.</Summary></M-CASE-OTHER></GD-MAIN></GraceGraphDocument>');
+    writeProjectFile(root, ".grace/verification/index.xml", '<GraceVerificationIndex graceVersion="4.0"><VerificationDocuments><VD-MAIN><Path>verification/main.xml</Path><Owns><V-M-CASE /><V-M-CASE-OTHER /></Owns></VD-MAIN></VerificationDocuments></GraceVerificationIndex>');
+    writeProjectFile(
+      root,
+      ".grace/verification/main.xml",
+      '<GraceVerificationDocument graceVersion="4.0"><VD-MAIN><V-M-CASE><TestFiles><File>src/case/__tests__/a.test.ts</File></TestFiles><Command>bun test src/case/</Command><Scenario>case works</Scenario></V-M-CASE><V-M-CASE-OTHER><TestFiles><File>src/case-other/a.test.ts</File></TestFiles><Command>bun test src/case/</Command><Scenario>sibling works</Scenario></V-M-CASE-OTHER></VD-MAIN></GraceVerificationDocument>',
+    );
+    writeProjectFile(root, "src/case/index.ts", '// START_MODULE_CONTRACT\n// PURPOSE: Case runtime.\n// LINKS: M-CASE\n// END_MODULE_CONTRACT\nexport const caseValue = true;\n');
+    writeProjectFile(root, "src/case/__tests__/a.test.ts", '// START_MODULE_CONTRACT\n// PURPOSE: Case tests.\n// LINKS: M-CASE\n// END_MODULE_CONTRACT\n');
+    writeProjectFile(root, "src/case-other/index.ts", '// START_MODULE_CONTRACT\n// PURPOSE: Sibling runtime.\n// LINKS: M-CASE-OTHER\n// END_MODULE_CONTRACT\nexport const siblingValue = true;\n');
+    writeProjectFile(root, "src/case-other/a.test.ts", '// START_MODULE_CONTRACT\n// PURPOSE: Sibling tests.\n// LINKS: M-CASE-OTHER\n// END_MODULE_CONTRACT\n');
+
+    const index = loadGraceArtifactIndex(root);
+
+    const caseHealth = buildModuleHealth(index, resolveModule(index, "M-CASE"));
+    expect(caseHealth.warnings.map((warning) => warning.code)).not.toContain("health.verification-command-does-not-reference-test-file");
+
+    const siblingHealth = buildModuleHealth(index, resolveModule(index, "M-CASE-OTHER"));
+    expect(siblingHealth.warnings.map((warning) => warning.code)).toContain("health.verification-command-does-not-reference-test-file");
+  });
+
   it("builds module health from projections and linked files", () => {
     const root = createQueryProject();
     const index = loadGraceArtifactIndex(root);
