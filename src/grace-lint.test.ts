@@ -104,6 +104,39 @@ describe("lintGraceProject", () => {
     expect(result.xmlFilesChecked).toBeGreaterThan(0);
   });
 
+  it("reports analysis.heuristic-confidence once per adapter per lint run", () => {
+    const hasPython = ["python3", "python"].some((binary) => {
+      const result = Bun.spawnSync([binary, "--version"]);
+      return result.exitCode === 0;
+    });
+    if (!hasPython) {
+      return;
+    }
+    const root = createProject();
+    writeMinimalGrace4Project(root);
+    const pythonMarkup = `# START_MODULE_CONTRACT
+# PURPOSE: Python fixture.
+# SCOPE: Export one function.
+# DEPENDS: none
+# LINKS: M-EXAMPLE
+# ROLE: RUNTIME
+# MAP_MODE: EXPORTS
+# END_MODULE_CONTRACT
+# START_MODULE_MAP
+# greet - Public greeting.
+# END_MODULE_MAP
+def greet():
+    return "hello"
+`;
+    writeProjectFile(root, "scripts/first.py", pythonMarkup);
+    writeProjectFile(root, "scripts/second.py", pythonMarkup);
+
+    const heuristicIssues = lintGraceProject(root).issues.filter((issue) => issue.code === "analysis.heuristic-confidence");
+
+    expect(heuristicIssues).toHaveLength(1);
+    expect(heuristicIssues[0]?.message).toContain("python analysis is heuristic");
+  });
+
   it("fails with migration guidance when only GRACE 3 docs are present", () => {
     const root = createProject();
     writeProjectFile(root, "docs/development-plan.xml", `<DevelopmentPlan />`);

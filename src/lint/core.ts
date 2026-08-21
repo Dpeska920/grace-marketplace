@@ -69,6 +69,8 @@ function validateGovernedFiles(result: LintResult, root: string): void {
 
   const files = collectCodeFiles(root, [".grace", ...(config?.ignoredDirs ?? [])]);
   result.filesChecked = files.length;
+  // Reported once per adapterId per run, not once per governed file.
+  const heuristicAdaptersReported = new Set<string>();
   for (const file of files) {
     const text = readText(file);
     if (!hasGraceMarkers(text)) {
@@ -76,6 +78,13 @@ function validateGovernedFiles(result: LintResult, root: string): void {
     }
     result.governedFiles += 1;
     for (const issue of analyzeGovernedFile(root, file, text).issues) {
+      if (issue.code === "analysis.heuristic-confidence") {
+        const adapterId = issue.message.split(/\s+/)[0] ?? "";
+        if (heuristicAdaptersReported.has(adapterId)) {
+          continue;
+        }
+        heuristicAdaptersReported.add(adapterId);
+      }
       addIssue(result, issue);
     }
   }
