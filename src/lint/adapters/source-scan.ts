@@ -9,6 +9,7 @@
 // Scan `text` character-by-character, tracking:
 //   - triple-quoted strings: triple-double and triple-single (Kotlin / Dart)
 //   - regular double/single-quoted strings with escape handling
+//   - Dart raw strings (r'...' / R"..."): backslash is literal, no escape handling
 //   - line comments (//) and block comments (/* */)
 //
 // Returns an array where result[i] is the combined nesting depth ({} + () + [])
@@ -25,7 +26,9 @@ export function buildLineDepths(text: string): number[] {
     | "string-double"
     | "string-single"
     | "triple-double"
-    | "triple-single";
+    | "triple-single"
+    | "raw-double"
+    | "raw-single";
 
   let state: State = "normal";
   let i = 0;
@@ -70,6 +73,23 @@ export function buildLineDepths(text: string): number[] {
         }
         if (peek2 === "/*") {
           state = "block-comment";
+          i += 2;
+          continue;
+        }
+        // Dart raw-string prefix: `r`/`R` immediately followed by a quote,
+        // with the prefix itself not part of an identifier (`var r = 'x'`
+        // must not be misread as a raw string). In a raw string a backslash
+        // is LITERAL, never an escape, so `r'\'` must not consume its own
+        // closing quote via escape handling. `r'''` / `r"""` (raw triple
+        // strings) fall through to the triple-quote handling below, which
+        // already ignores escapes.
+        if (
+          (ch === "r" || ch === "R") &&
+          (text[i + 1] === "'" || text[i + 1] === '"') &&
+          text[i + 1] !== text[i + 2] &&
+          !(i > 0 && /[A-Za-z0-9_$]/.test(text[i - 1] ?? ""))
+        ) {
+          state = text[i + 1] === "'" ? "raw-single" : "raw-double";
           i += 2;
           continue;
         }
@@ -159,6 +179,28 @@ export function buildLineDepths(text: string): number[] {
             i += 2;
           }
         } else if (ch === "'") {
+          state = "normal";
+          i++;
+        } else {
+          i++;
+        }
+        break;
+
+      case "raw-double":
+        // Dart raw string r"..." / R"...": backslash is literal, NOT an
+        // escape — skip straight to the matching double quote.
+        if (ch === '"') {
+          state = "normal";
+          i++;
+        } else {
+          i++;
+        }
+        break;
+
+      case "raw-single":
+        // Dart raw string r'...' / R'...': backslash is literal, NOT an
+        // escape — skip straight to the matching single quote.
+        if (ch === "'") {
           state = "normal";
           i++;
         } else {

@@ -253,4 +253,71 @@ describe("buildLineDepths", () => {
     const d = depths(text);
     expect(d.length).toBe(1);
   });
+
+  // --- Dart raw strings (r'...' / R"...") ---
+
+  it("raw string r'\\' (a single backslash) does not hide a following top-level main", () => {
+    // Dart raw string: backslash is literal, NOT an escape. r'\' is a string
+    // containing ONE backslash; the closing quote must not be consumed by
+    // escape handling (which would desync the scanner and swallow later
+    // braces/parens, shifting every following depth).
+    const text = [
+      "void helper() {",
+      "  if (c == r'\\') {",
+      "    // inside",
+      "  }",
+      "}",
+      "void main() {",
+      "  print('hi');",
+      "}",
+    ].join("\n");
+    const d = depths(text);
+    expect(d[5]).toBe(0); // main — top-level, extracted
+  });
+
+  it('raw string r"..." with a backslash likewise does not hide a following top-level main', () => {
+    const text = [
+      "void helper() {",
+      '  var s = r"\\";',
+      "}",
+      "void main() {",
+    ].join("\n");
+    const d = depths(text);
+    expect(d[3]).toBe(0);
+  });
+
+  it("raw string is closed by its own quote: braces after it still count", () => {
+    // r'x' closes at its own quote; the { after it must increment depth.
+    const text = "var a = r'x'; {\n  fun()";
+    const d = depths(text);
+    expect(d[1]).toBe(1);
+  });
+
+  it("uppercase R'\\' raw string is recognized and closes at its own quote", () => {
+    const text = "var a = R'\\'; {\nclass After";
+    const d = depths(text);
+    expect(d[1]).toBe(1);
+  });
+
+  it("r''' raw triple string falls through to triple-quote handling (escapes already ignored)", () => {
+    const text = "var s = r'''\n  { ignored {\n'''\nclass After";
+    const d = depths(text);
+    expect(d[3]).toBe(0);
+  });
+
+  it("non-raw identifier ending in r followed by a quote is NOT misread as a raw string", () => {
+    // `var r = 'x'` — the `r` is a plain identifier, not a raw-string prefix.
+    // The following 'x' is a regular string: escape handling still applies.
+    const text = "var r = 'x';\nclass After";
+    const d = depths(text);
+    expect(d[1]).toBe(0);
+  });
+
+  it("identifier char directly before r (arr'x') prevents raw-string detection", () => {
+    // The r in `arr'x'` is preceded by an identifier char, so it is not a
+    // raw-string prefix — the 'x' is a regular single-quoted string.
+    const text = "var arr'x';\nclass After";
+    const d = depths(text);
+    expect(d[1]).toBe(0);
+  });
 });
