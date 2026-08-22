@@ -464,6 +464,37 @@ describe("markup.module-map-mismatch", () => {
 
     expect(codes).toContain("markup.module-map-mismatch");
   });
+
+  // BL-114: LIST_SYMBOL_HEAD's lookahead rejected an identifier immediately
+  // followed by `(`, so a "name(args) - desc" MODULE_MAP entry was recognized as an
+  // item head (LIST_ITEM_HEAD accepts `\s*\(`) but yielded symbolName = undefined
+  // and was dropped from parity checking, reporting the real export as missing.
+  it("BL-114: 'name(args)' MODULE_MAP entry extracts symbolName and stays silent when the export exists", () => {
+    const { root, file } = tmpTarget("grace-map-name-args-");
+    const moduleMap = "// resolveAndroidVoiceAudioFormat(sdkInt) - VoiceAudioFormat; >= floor -> oggOpus, below -> aacLc.";
+    const text = `${buildFile({ mapMode: "EXPORTS", moduleMap })}export function resolveAndroidVoiceAudioFormat(sdkInt: number) { return sdkInt; }\n`;
+
+    expect(parseGovernedFile(root, file, text).moduleMap[0]?.symbolName).toBe("resolveAndroidVoiceAudioFormat");
+    const codes = analyzeGovernedFile(root, file, text).issues.map((issue) => issue.code);
+
+    expect(codes).not.toContain("markup.module-map-mismatch");
+  });
+
+  // BL-114 guard: a wrapped description continuation that merely STARTS with
+  // "name(...)" as prose must not become a phantom item whose symbolName
+  // ("jsonEncode") is reported as an undeclared extra — only a head with a
+  // description delimiter or end-of-line after the parens counts as an item.
+  it("BL-114: wrapped prose continuation starting with 'name(...)' extracts no phantom symbolName", () => {
+    const { root, file } = tmpTarget("grace-map-name-args-prose-");
+    const moduleMap = "// DriftSource - row storage\n//   _insertMessage stores jsonEncode(...) when non-empty, NULL when empty";
+    const text = `${buildFile({ mapMode: "EXPORTS", moduleMap })}export class DriftSource {}\n`;
+
+    const record = parseGovernedFile(root, file, text);
+    expect(record.moduleMap.map((item) => item.symbolName)).toEqual(["DriftSource"]);
+    const codes = analyzeGovernedFile(root, file, text).issues.map((issue) => issue.code);
+
+    expect(codes).not.toContain("markup.module-map-mismatch");
+  });
 });
 
 describe("markup.role-map-mode-mismatch", () => {

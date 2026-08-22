@@ -460,7 +460,11 @@ function parseFieldSection(section: TextSection | null): FileFieldSection | null
 
 /** One or more `/`- or `,`-separated identifiers, matching the `symbolName` extraction below. */
 const LIST_SYMBOL = "(?:[$_]|\\p{ID_Start})(?:[$_]|\\p{ID_Continue})*|default";
-const LIST_SYMBOL_HEAD = new RegExp(`^(?:[-*]\\s*)?(${LIST_SYMBOL})(?=\\s|$)`, "u");
+// Lookahead accepts `(` too: an item head "name(args) - desc" (LIST_ITEM_HEAD's
+// `\s*\(` alternative) must yield symbolName = name, not undefined. The original
+// `(?=\s|$)` rejected an identifier immediately followed by `(`, so such a line
+// was recognized as an item head but its symbol was dropped from parity checking.
+const LIST_SYMBOL_HEAD = new RegExp(`^(?:[-*]\\s*)?(${LIST_SYMBOL})(?=\\s|$|\\()`, "u");
 
 /**
  * Matches a physical line that starts a new MODULE_MAP item rather than
@@ -471,9 +475,16 @@ const LIST_SYMBOL_HEAD = new RegExp(`^(?:[-*]\\s*)?(${LIST_SYMBOL})(?=\\s|$)`, "
  * validateMapShape's description check matched a dash or colon anywhere in a
  * line, so ordinary prose containing either ("Re-exports the two…", "for
  * downstream consumers to call directly.") was misread as a second item.
+ *
+ * The paren head signal (BL-114, "name(args) - desc") requires a description
+ * delimiter or end-of-line AFTER the parenthesized group: a wrapped
+ * description continuation that merely STARTS with "name(...)" as prose
+ * ("jsonEncode(...) when non-empty…") is folded back into the preceding item
+ * instead of becoming a phantom item whose extracted symbolName
+ * ("jsonEncode"/"retry") would be reported as an undeclared extra.
  */
 const LIST_ITEM_HEAD = new RegExp(
-  `^(?:[-*]\\s+)?(?:${LIST_SYMBOL})(?:\\s*[/,]\\s*(?:${LIST_SYMBOL}))*(?:\\s+[-–—]\\s+|\\s*:\\s+|\\s*\\(|\\s*$)`,
+  `^(?:[-*]\\s+)?(?:${LIST_SYMBOL})(?:\\s*[/,]\\s*(?:${LIST_SYMBOL}))*(?:\\s+[-–—]\\s+|\\s*:\\s+|\\s*\\(.*\\)(?:\\s+[-–—]\\s+|\\s*:\\s+|\\s*$)|\\s*$)`,
   "u",
 );
 
