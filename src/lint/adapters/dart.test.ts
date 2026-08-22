@@ -136,6 +136,45 @@ String doWork(dynamic x) {
     expect(analysis.exports.has("greet")).toBe(true);
   });
 
+  // BL-113 (a1): a single-line function-typed private var must not export a phantom
+  // `Function` — the real symbol is private, so there is nothing to export.
+  it("BL-113: single-line function-typed private var exports no phantom Function (a1)", () => {
+    const text = `final Map<String, Widget Function(ChatMessage message)> _kDrawableCardBuilders = { };`;
+    const analysis = adapter.analyze("lib/ai_chat_message_bubble.dart", text);
+    expect(analysis.exports.has("Function")).toBe(false);
+    expect(analysis.exports.has("_kDrawableCardBuilders")).toBe(false);
+    expect(analysis.localSymbols.has("_kDrawableCardBuilders")).toBe(true);
+  });
+
+  // BL-113 (a2): a multi-line public function-typed var (type on one line, name on
+  // the next) must export the real public name and no phantom `Function`.
+  it("BL-113: multi-line public function-typed var exports the real name, no phantom Function (a2)", () => {
+    const text = `final Map<String, Widget Function(ChatWidgetCardMessage message)>
+    aiWidgetCardBuilders = { };`;
+    const analysis = adapter.analyze("lib/ai_widget_card_registry.dart", text);
+    expect(analysis.exports.has("aiWidgetCardBuilders")).toBe(true);
+    expect(analysis.exports.has("Function")).toBe(false);
+  });
+
+  // BL-113 (b): a function returning a function type captures the real declaration
+  // name. A private one goes to localSymbols only; a public one is exported.
+  it("BL-113: function returning a function type captures the real name, no phantom Function (b)", () => {
+    const privateAnalysis = adapter.analyze(
+      "lib/database.dart",
+      `ErrorReporter? Function()? _tryGetIt() { return null; }`,
+    );
+    expect(privateAnalysis.exports.has("Function")).toBe(false);
+    expect(privateAnalysis.exports.has("_tryGetIt")).toBe(false);
+    expect(privateAnalysis.localSymbols.has("_tryGetIt")).toBe(true);
+
+    const publicAnalysis = adapter.analyze(
+      "lib/database.dart",
+      `ErrorReporter? Function()? tryGetIt() { return null; }`,
+    );
+    expect(publicAnalysis.exports.has("tryGetIt")).toBe(true);
+    expect(publicAnalysis.exports.has("Function")).toBe(false);
+  });
+
   it("bare export directive sets hasWildcardReExport=true", () => {
     const text = `export 'src/foo.dart';`;
     const analysis = adapter.analyze("lib/barrel.dart", text);

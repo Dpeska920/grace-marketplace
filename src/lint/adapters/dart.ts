@@ -66,19 +66,38 @@ function matchTopLevelDeclName(line: string): string | null {
 // Top-level function/constructor declaration: requires an explicit return-type token before the name.
 // The prefix (return type) is REQUIRED (no ?) to distinguish declarations from bare call expressions.
 // Captures: group(1)=return-type tokens, group(2)=function name.
+// The return-type class accepts `(` `)` so a return type that is itself a function type
+// ("ErrorReporter? Function()? _tryGetIt(") is consumed by group(1) and the REAL declaration
+// name is captured — without it, "Function" was read as the name and exported as a phantom.
 // Examples that match: "void main(", "Future<int> f(", "String greet(", "set x(",
+// "ErrorReporter? Function()? _tryGetIt(" (name = _tryGetIt).
 // Examples that do NOT match: "mySideEffect(" (no return-type prefix before the name).
 // For rare legacy top-level functions that omit the return type, the body-indicator fallback
 // (TOP_LEVEL_FUNC_BODY_RE) catches declarations with a `{` or `=>` body marker on the same line.
-const TOP_LEVEL_FUNC_RE = /^([\w<>\[\]?,\s]+)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
+const TOP_LEVEL_FUNC_RE = /^([\w<>\[\]?,\s()]+)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
 
 // Fallback for omitted-return-type declarations: requires a body indicator on the same line.
 // Matches: "name(...) {", "name(...) =>", "name(...) async", "name(...) sync*".
 // Does NOT match bare calls: "name();" or "name(arg);" which have no body.
 const TOP_LEVEL_FUNC_BODY_RE = /^([A-Za-z_][A-Za-z0-9_]*)\s*\(.*\)\s*(async|sync\*|{|=>)/;
 
+// Top-level var declaration: "final|const|var [type] name =|;". The optional type
+// class accepts `(` `)` so a function-typed type ("Map<String, Widget Function(...)>")
+// is consumed by the type group and the real declaration name is captured.
 const TOP_LEVEL_VAR_RE =
-  /^(?:final|const|var|late\s+final|late\s+var)\s+(?:[\w<>\[\]?,\s]*?\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*[=;]/;
+  /^(?:final|const|var|late\s+final|late\s+var)\s+(?:[\w<>\[\]?,\s()]*?\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*[=;]/;
+
+// Top-level var declaration split across two physical lines: the first line carries
+// only the type (no `=`/`;`), the second carries "name =" / "name;":
+//   final Map<String, Widget Function(ChatWidgetCardMessage message)>
+//       aiWidgetCardBuilders = {
+// TOP_LEVEL_VAR_RE cannot match the type-only line, and without this branch the
+// func pattern below would read the type's trailing "Function(" as a declaration
+// name and export a phantom `Function`.
+const TOP_LEVEL_VAR_HEADER_RE =
+  /^(?:final|const|var|late\s+final|late\s+var)\s+[\w<>\[\]?,\s()]+$/;
+// The continuation line carrying the declaration name: "name =" or "name;".
+const TOP_LEVEL_VAR_NAME_RE = /^([A-Za-z_][A-Za-z0-9_]*)\s*[=;]/;
 
 // Top-level getter: "<type> get <name>" at depth 0.
 // Examples: "int get answer =>", "List<String> get names =>", "String get id {"
@@ -93,9 +112,15 @@ const COMMENT_RE = /^\s*(\/\/|\/\*|\*)/;
 const IMPORT_ONLY_RE = /^\s*(import|library|part)\s/;
 
 // NIT-6: expanded keyword guard for top-level func regex
+// `Function` is added as defense-in-depth: a function-type keyword must never be
+// treated as a declaration name (a return type containing "Function(" previously
+// landed a phantom `Function` in exports). A real top-level symbol named
+// `Function` would shadow the dart:core type and does not occur in practice; the
+// regex fixes above already capture the real declaration name in the shapes this
+// guard protects against, so nothing legitimate is dropped.
 const DART_KEYWORD_GUARD = new Set([
   "if", "for", "while", "return", "switch", "catch", "await", "assert", "sync", "yield",
-  "get", "set",
+  "get", "set", "Function",
 ]);
 
 interface ExportDirectiveResult {
@@ -208,6 +233,19 @@ function extractDartExports(text: string): ExtractionResult {
     const varMatch = TOP_LEVEL_VAR_RE.exec(line);
     if (varMatch) {
       recordDeclaration(exports, localSymbols, varMatch[1]);
+      continue;
+    }
+
+    // Multi-line var declaration: a type-only line at depth 0 (no `=`/`;`) continues
+    // onto the next physical line, which carries "name =" / "name;". Recognized
+    // before the func pattern so the type line's inner "Function(" is never read as
+    // a declaration name. The name line is consumed here and skipped by the loop.
+    if (TOP_LEVEL_VAR_HEADER_RE.test(line)) {
+      const nameMatch = TOP_LEVEL_VAR_NAME_RE.exec(lines[idx + 1]?.trim() ?? "");
+      if (nameMatch) {
+        recordDeclaration(exports, localSymbols, nameMatch[1]);
+        idx++;
+      }
       continue;
     }
 
