@@ -469,12 +469,20 @@ const LIST_SYMBOL_HEAD = new RegExp(`^(?:[-*]\\s*)?(${LIST_SYMBOL})(?=\\s|$|\\()
 /**
  * Matches a physical line that starts a new MODULE_MAP item rather than
  * continuing the previous one: one or more `/`- or `,`-separated identifiers
- * followed by a dash-delimited or colon-delimited description, an opening
- * paren (e.g. `(private)`), or the end of the line (a bare symbol on its own
- * line). Anchored at `^` on purpose — the unanchored form copied from
- * validateMapShape's description check matched a dash or colon anywhere in a
- * line, so ordinary prose containing either ("Re-exports the two…", "for
- * downstream consumers to call directly.") was misread as a second item.
+ * followed by a dash-delimited or colon-delimited description, or an opening
+ * paren (e.g. `name(args)` — the BL-114 form, see below). Anchored at `^` on
+ * purpose — the unanchored form copied from validateMapShape's description
+ * check matched a dash or colon anywhere in a line, so ordinary prose
+ * containing either ("Re-exports the two…", "for downstream consumers to call
+ * directly.") was misread as a second item.
+ *
+ * A bare symbol on its own line (no `-`/`:`/`(` delimiter) is deliberately
+ * NOT a head. That shape is indistinguishable from a wrapped description
+ * whose continuation happens to be a single bare word, which must fold into
+ * the preceding item — treating it as a head manufactured a phantom
+ * symbolName ("extra: group") for ordinary prose. The bare-symbol list form
+ * is undocumented (semantic-markup.md documents only `symbol - description`)
+ * and unused in governed files.
  *
  * The paren head signal (BL-114, "name(args) - desc") requires a description
  * delimiter or end-of-line AFTER the parenthesized group: a wrapped
@@ -484,7 +492,7 @@ const LIST_SYMBOL_HEAD = new RegExp(`^(?:[-*]\\s*)?(${LIST_SYMBOL})(?=\\s|$|\\()
  * ("jsonEncode"/"retry") would be reported as an undeclared extra.
  */
 const LIST_ITEM_HEAD = new RegExp(
-  `^(?:[-*]\\s+)?(?:${LIST_SYMBOL})(?:\\s*[/,]\\s*(?:${LIST_SYMBOL}))*(?:\\s+[-–—]\\s+|\\s*:\\s+|\\s*\\(.*\\)(?:\\s+[-–—]\\s+|\\s*:\\s+|\\s*$)|\\s*$)`,
+  `^(?:[-*]\\s+)?(?:${LIST_SYMBOL})(?:\\s*[/,]\\s*(?:${LIST_SYMBOL}))*(?:\\s+[-–—]\\s+|\\s*:\\s+|\\s*\\(.*\\)(?:\\s+[-–—]\\s+|\\s*:\\s+|\\s*$))`,
   "u",
 );
 

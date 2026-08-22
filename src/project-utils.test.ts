@@ -497,6 +497,58 @@ describe("markup.module-map-mismatch", () => {
   });
 });
 
+describe("LIST_ITEM_HEAD bare-symbol form", () => {
+  it("folds a wrapped description whose continuation is a single bare word into the preceding item", () => {
+    const { root, file } = tmpTarget("grace-map-bare-word-fold-");
+    // `group` on its own line is a wrapped continuation, not a new symbol —
+    // the bare-symbol head form is undocumented and indistinguishable from a
+    // single-word continuation line.
+    const moduleMap = "// Foo - long description that continues onto the next line\n//   group\n// Bar - another symbol";
+    const text = `${buildFile({ mapMode: "EXPORTS", moduleMap })}export const Foo = 1;\nexport const Bar = 2;\n`;
+
+    const record = parseGovernedFile(root, file, text);
+    expect(record.moduleMap.map((item) => item.symbolName)).toEqual(["Foo", "Bar"]);
+  });
+
+  it("a single bare word continuation never yields a phantom symbolName", () => {
+    const { root, file } = tmpTarget("grace-map-bare-word-no-phantom-");
+    const moduleMap = "// Foo - description\n//   group";
+    const text = `${buildFile({ mapMode: "EXPORTS", moduleMap })}export const Foo = 1;\n`;
+
+    const record = parseGovernedFile(root, file, text);
+    expect(record.moduleMap.map((item) => item.symbolName)).toEqual(["Foo"]);
+    expect(record.moduleMap[0]?.hasContinuation).toBe(true);
+  });
+
+  it("a two-word wrapped continuation still folds into the preceding item", () => {
+    const { root, file } = tmpTarget("grace-map-two-word-fold-");
+    const moduleMap = "// Foo - long description that continues\n//   onto the next line\n// Bar - another symbol";
+    const text = `${buildFile({ mapMode: "EXPORTS", moduleMap })}export const Foo = 1;\nexport const Bar = 2;\n`;
+
+    const record = parseGovernedFile(root, file, text);
+    expect(record.moduleMap.map((item) => item.symbolName)).toEqual(["Foo", "Bar"]);
+  });
+
+  it("'symbol - description' form still parses as a head", () => {
+    const { root, file } = tmpTarget("grace-map-dash-form-");
+    const moduleMap = "// value - Runtime value.\n// ExampleType - Public type.";
+    const text = `${buildFile({ mapMode: "EXPORTS", moduleMap })}export const value = 1;\nexport type ExampleType = string;\n`;
+
+    const record = parseGovernedFile(root, file, text);
+    expect(record.moduleMap.map((item) => item.symbolName)).toEqual(["value", "ExampleType"]);
+  });
+
+  it("'name(args) - description' form still parses as a head with the bare-name symbol", () => {
+    const { root, file } = tmpTarget("grace-map-name-args-form-");
+    const moduleMap = "// resolveAndroidVoiceAudioFormat(sdkInt) - VoiceAudioFormat; >= floor -> oggOpus, below -> aacLc.";
+    const text = `${buildFile({ mapMode: "EXPORTS", moduleMap })}export function resolveAndroidVoiceAudioFormat(sdkInt: number) { return sdkInt; }\n`;
+
+    const record = parseGovernedFile(root, file, text);
+    expect(record.moduleMap[0]?.symbolName).toBe("resolveAndroidVoiceAudioFormat");
+    expect(record.moduleMap).toHaveLength(1);
+  });
+});
+
 describe("markup.role-map-mode-mismatch", () => {
   it("stays silent when the explicit MAP_MODE already matches the ROLE's recommended default", () => {
     const { root, file } = tmpTarget("grace-role-default-");
