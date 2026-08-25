@@ -93,6 +93,14 @@ export type LanguageAdapter = {
   id: string;
   supports(filePath: string): boolean;
   analyze(filePath: string, text: string): LanguageAnalysis;
+  /**
+   * Optional version identifier of the external analyzer runtime backing
+   * this adapter (e.g. the TypeScript compiler version, or the Python
+   * interpreter binary + version). Adapters with no external runtime
+   * (in-process regex parsers) omit this — their "version" is the `grace`
+   * code itself, already covered by ANALYSIS_CACHE_SCHEMA_VERSION.
+   */
+  analyzerVersion?(): string;
 };
 
 /** Actionable failure raised when an optional language runtime is unavailable. */

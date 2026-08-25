@@ -15,6 +15,15 @@ export const ANALYSIS_CACHE_SCHEMA_VERSION = 1;
 type CachedAnalysisRecord = {
   schemaVersion: number;
   adapterId: string;
+  /**
+   * Version of the external analyzer runtime the entry was produced with
+   * (e.g. `ts.version`, or `python3:Python 3.12.1`). Absent when the
+   * adapter has no `analyzerVersion()` (no external runtime to version).
+   * Compared, not bumped: a record written for one analyzer version is a
+   * miss under a different one, so the cache self-heals on upgrade instead
+   * of requiring a schema bump or a cleanup command.
+   */
+  analyzerVersion?: string;
   analysis: {
     adapterId: string;
     exports: string[];
@@ -65,10 +74,11 @@ function cacheEntryPath(cacheDir: string, key: string): string {
   return path.join(cacheDir, key.slice(0, 2), `${key}.json`);
 }
 
-function toCachedRecord(adapterId: string, analysis: LanguageAnalysis): CachedAnalysisRecord {
+function toCachedRecord(adapterId: string, analysis: LanguageAnalysis, analyzerVersion: string | undefined): CachedAnalysisRecord {
   return {
     schemaVersion: ANALYSIS_CACHE_SCHEMA_VERSION,
     adapterId,
+    analyzerVersion,
     analysis: {
       adapterId: analysis.adapterId,
       exports: [...analysis.exports],
@@ -110,7 +120,7 @@ function fromCachedRecord(record: CachedAnalysisRecord["analysis"]): LanguageAna
  * Any read, parse, schema, or adapter mismatch is a miss, never an error: the
  * cache is a speedup and must not be able to break linting.
  */
-export function readCachedAnalysis(adapterId: string, filePath: string, text: string): LanguageAnalysis | null {
+export function readCachedAnalysis(adapterId: string, filePath: string, text: string, analyzerVersion?: string): LanguageAnalysis | null {
   const cacheDir = resolveAnalysisCacheDir();
   if (!cacheDir) {
     return null;
@@ -119,6 +129,12 @@ export function readCachedAnalysis(adapterId: string, filePath: string, text: st
     const raw = readFileSync(cacheEntryPath(cacheDir, analysisCacheKey(filePath, text)), "utf8");
     const parsed = JSON.parse(raw) as CachedAnalysisRecord;
     if (parsed.schemaVersion !== ANALYSIS_CACHE_SCHEMA_VERSION || parsed.adapterId !== adapterId) {
+      return null;
+    }
+    // Absence on both sides (adapter has no analyzerVersion()) is a match.
+    // A mismatch on either side — including an old record missing the field
+    // while the adapter now reports one — is a miss.
+    if (parsed.analyzerVersion !== analyzerVersion) {
       return null;
     }
     return fromCachedRecord(parsed.analysis);
@@ -133,7 +149,7 @@ export function readCachedAnalysis(adapterId: string, filePath: string, text: st
  * Errors thrown by adapters must never reach this function, so environment
  * failures are not cached.
  */
-export function writeCachedAnalysis(adapterId: string, filePath: string, text: string, analysis: LanguageAnalysis): void {
+export function writeCachedAnalysis(adapterId: string, filePath: string, text: string, analysis: LanguageAnalysis, analyzerVersion?: string): void {
   const cacheDir = resolveAnalysisCacheDir();
   if (!cacheDir) {
     return;
@@ -142,7 +158,7 @@ export function writeCachedAnalysis(adapterId: string, filePath: string, text: s
     const target = cacheEntryPath(cacheDir, analysisCacheKey(filePath, text));
     mkdirSync(path.dirname(target), { recursive: true });
     const temporary = `${target}.${process.pid}.tmp`;
-    writeFileSync(temporary, JSON.stringify(toCachedRecord(adapterId, analysis)));
+    writeFileSync(temporary, JSON.stringify(toCachedRecord(adapterId, analysis, analyzerVersion)));
     renameSync(temporary, target);
   } catch {
     // The cache is an optimization; never fail linting because of it.

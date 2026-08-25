@@ -174,6 +174,7 @@ Successful per-file language analyses are cached across runs, so unchanged gover
 - Location: `$XDG_CACHE_HOME/grace-cli/analysis`, falling back to `~/.cache/grace-cli/analysis`. Override the base directory with `GRACE_CACHE_DIR`.
 - Disable caching with `GRACE_NO_CACHE=1`.
 - The cache lives outside the project: it never touches `.grace` and produces no drift noise.
+- Each entry also remembers the version of the external analyzer that produced it (e.g. the TypeScript compiler or Python interpreter version) and is discarded when that version changes, so upgrading an analyzer never serves a stale result.
 
 ## Grep-First Navigation
 

@@ -195,6 +195,11 @@ export function createVueAdapter(): LanguageAdapter {
     supports(filePath) {
       return VUE_EXTENSIONS.has(path.extname(filePath));
     },
+    // Analysis runs through createTypeScriptAdapter().analyze() on a virtual
+    // .ts path — the effective analyzer version is the TS adapter's own.
+    analyzerVersion() {
+      return tsAdapter.analyzerVersion?.() ?? "unknown";
+    },
     analyze(filePath, text) {
       const blocks = extractScriptBlocks(text);
 

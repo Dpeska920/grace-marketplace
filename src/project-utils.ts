@@ -610,12 +610,13 @@ export function analyzeGovernedFile(root: string, filePath: string, text: string
     try {
       // Successful analyses are content-cached across runs; failures stay
       // uncached so environment fixes take effect immediately.
-      const cached = readCachedAnalysis(adapter.id, filePath, text);
+      const analyzerVersion = adapter.analyzerVersion?.();
+      const cached = readCachedAnalysis(adapter.id, filePath, text, analyzerVersion);
       if (cached) {
         language = cached;
       } else {
         language = adapter.analyze(filePath, text);
-        writeCachedAnalysis(adapter.id, filePath, text, language);
+        writeCachedAnalysis(adapter.id, filePath, text, language, analyzerVersion);
       }
     } catch (error) {
       issues.push(markupIssue(

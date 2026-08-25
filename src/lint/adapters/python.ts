@@ -265,11 +265,42 @@ function runPythonAnalyzer(filePath: string, text: string) {
   );
 }
 
+/**
+ * Memoized per process: computed once, on first call, and reused afterwards.
+ * A failed lookup ("unavailable") is itself a stable result and is cached
+ * too, not retried on every file — otherwise every analyzed file would pay
+ * for a `spawnSync`, defeating the point of the analysis cache.
+ */
+let cachedAnalyzerVersion: string | undefined;
+
+function detectAnalyzerVersion(): string {
+  for (const binary of PYTHON_BINARIES) {
+    const run = spawnSync(binary, ["--version"], { encoding: "utf8" });
+    if (run.error) {
+      const code = (run.error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        continue;
+      }
+      return "unavailable";
+    }
+    // Python 2 prints `--version` to stderr; Python 3 prints to stdout.
+    const output = (run.stdout || run.stderr || "").trim();
+    return `${binary}:${output || "unknown"}`;
+  }
+  return "unavailable";
+}
+
 export function createPythonAdapter(): LanguageAdapter {
   return {
     id: "python",
     supports(filePath) {
       return PY_EXTENSIONS.has(path.extname(filePath));
+    },
+    analyzerVersion() {
+      if (cachedAnalyzerVersion === undefined) {
+        cachedAnalyzerVersion = detectAnalyzerVersion();
+      }
+      return cachedAnalyzerVersion;
     },
     analyze(filePath, text) {
       return runPythonAnalyzer(filePath, text);

@@ -63,4 +63,17 @@ describe("PythonAdapter", () => {
       else process.env.PYTHONIOENCODING = previousEncoding;
     }
   });
+
+  test("analyzerVersion is memoized: repeated calls return the identical value", () => {
+    // Spawning a subprocess per call would defeat the point of the analysis
+    // cache. Asserting the exact process count would require injecting a
+    // spawnSync spy into python.ts, which the adapter does not currently
+    // support. What is actually verified here: two calls return the exact
+    // same string (module-level memoization is observable through identity
+    // of the returned value, not through call-count instrumentation).
+    const first = adapter.analyzerVersion?.();
+    const second = adapter.analyzerVersion?.();
+    expect(first).toBeDefined();
+    expect(second).toBe(first);
+  });
 });

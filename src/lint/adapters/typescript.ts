@@ -66,6 +66,9 @@ export function createTypeScriptAdapter(): LanguageAdapter {
     supports(filePath) {
       return TS_EXTENSIONS.has(path.extname(filePath));
     },
+    analyzerVersion() {
+      return ts.version;
+    },
     analyze(filePath, text) {
       const sourceFile = ts.createSourceFile(
         filePath,

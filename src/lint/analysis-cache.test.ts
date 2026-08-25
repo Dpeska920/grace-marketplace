@@ -127,6 +127,26 @@ describe("analysis cache", () => {
     expect(readCachedAnalysis("typescript", file, text)).toBeNull();
   });
 
+  it("treats analyzer version mismatches as misses", () => {
+    const file = "/project/src/versioned.ts";
+    const text = "export const versioned = true;\n";
+    writeCachedAnalysis("typescript", file, text, sampleAnalysis(), "5.9.0");
+
+    expect(readCachedAnalysis("typescript", file, text, "5.9.0")).not.toBeNull();
+    expect(readCachedAnalysis("typescript", file, text, "5.10.0")).toBeNull();
+  });
+
+  it("treats a missing analyzer version as a stable match when the adapter reports none", () => {
+    const file = "/project/src/unversioned.ts";
+    const text = "export const unversioned = true;\n";
+    // No analyzerVersion argument — adapters without an external runtime
+    // (e.g. dart.ts, kotlin.ts) never pass one.
+    writeCachedAnalysis("typescript", file, text, sampleAnalysis());
+
+    expect(readCachedAnalysis("typescript", file, text)).not.toBeNull();
+    expect(readCachedAnalysis("typescript", file, text)).toEqual(sampleAnalysis());
+  });
+
   it("does not read or write when GRACE_NO_CACHE is set", () => {
     process.env.GRACE_NO_CACHE = "1";
     const file = "/project/src/disabled.ts";
