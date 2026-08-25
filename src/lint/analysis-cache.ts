@@ -49,9 +49,16 @@ function resolveAnalysisCacheDir(): string | null {
   return path.join(base, "analysis");
 }
 
-/** Content-addressed key: file content plus extension, independent of path. */
+/**
+ * Content-addressed key: file content plus basename, independent of directory.
+ * The basename (not just the extension) is part of the key because some
+ * adapters branch on it — Dart's `_test.dart` suffix and Python's
+ * `__init__.py` special-casing both change analysis output for identical
+ * content. Directory is excluded: analysis does not depend on where the file
+ * lives, only on its name and content.
+ */
 export function analysisCacheKey(filePath: string, text: string): string {
-  return createHash("sha256").update(`${path.extname(filePath)}\u0000${text}`).digest("hex");
+  return createHash("sha256").update(`${path.basename(filePath)}\u0000${text}`).digest("hex");
 }
 
 function cacheEntryPath(cacheDir: string, key: string): string {

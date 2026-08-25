@@ -169,7 +169,7 @@ Built-in ignored directories:
 
 ### Analysis Cache
 
-Successful per-file language analyses are cached across runs, so unchanged governed files are not re-analyzed. Entries are keyed by file content and extension plus a schema version: any file edit or analyzer logic change invalidates the entry automatically, and failed analyses are never cached, so fixing a missing runtime takes effect immediately.
+Successful per-file language analyses are cached across runs, so unchanged governed files are not re-analyzed. Entries are keyed by file content and file name (basename, not directory) plus a schema version: any file edit, rename, or analyzer logic change invalidates the entry automatically, and failed analyses are never cached, so fixing a missing runtime takes effect immediately.
 
 - Location: `$XDG_CACHE_HOME/grace-cli/analysis`, falling back to `~/.cache/grace-cli/analysis`. Override the base directory with `GRACE_CACHE_DIR`.
 - Disable caching with `GRACE_NO_CACHE=1`.

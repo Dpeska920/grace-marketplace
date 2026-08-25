@@ -70,11 +70,27 @@ describe("analysis cache", () => {
     expect([...(cached?.exports ?? [])]).toEqual(["value", "ExampleType"]);
   });
 
-  it("keys by content and extension, not by path", () => {
+  it("keys by content and basename, not by directory", () => {
     const text = "export const value = 1;\n";
     expect(analysisCacheKey("/a/src/example.ts", text)).toBe(analysisCacheKey("/b/elsewhere/example.ts", text));
     expect(analysisCacheKey("/a/src/example.ts", text)).not.toBe(analysisCacheKey("/a/src/example.js", text));
     expect(analysisCacheKey("/a/src/example.ts", text)).not.toBe(analysisCacheKey("/a/src/example.ts", `${text}// changed\n`));
+  });
+
+  it("keys by basename, not just extension, when adapters branch on the file name", () => {
+    // Dart's `_test.dart` suffix flips `usesTestFramework`; a shared extension
+    // must not collapse `widget.dart` and `widget_test.dart` into one key.
+    const dartText = "// MODULE_CONTRACT\nvoid main() {}\nclass Widget {}\n";
+    expect(analysisCacheKey("/p/lib/widget.dart", dartText)).not.toBe(
+      analysisCacheKey("/p/lib/widget_test.dart", dartText),
+    );
+
+    // Python's `__init__.py` re-exports imported names; a shared extension
+    // must not collapse `__init__.py` and `mod.py` into one key.
+    const pythonText = "from .widget import Widget\n\ndef helper():\n    pass\n";
+    expect(analysisCacheKey("/p/pkg/__init__.py", pythonText)).not.toBe(
+      analysisCacheKey("/p/pkg/mod.py", pythonText),
+    );
   });
 
   it("treats schema version mismatches as misses", () => {
