@@ -1,3 +1,22 @@
+## <small>4.0.7 (2026-08-29)</small>
+
+### Summary
+
+Release 4.0.7 upgrades GRACE plan linting so a task's `DependsOn` element can list multiple predecessors using comma-separated text, space-separated text, child anchor tags, or the legacy child-text form. This lets plans express their true dependency DAG instead of forcing independent tasks into artificial linear chains, and validation now catches unknown, duplicate, self, and cyclic dependencies instead of silently dropping them, with error hints pointing to the canonical comma-separated form. The grace-plan skill documentation and change plan template were updated to reflect the multi-dependency contract.
+
+* feat(lint): accept multiple task dependencies in DependsOn ([72012f0](https://github.com/osovv/grace-marketplace/commit/72012f0))
+
+## <small>4.0.6 (2026-08-29)</small>
+
+### Summary
+
+This release makes `grace lint` a fully observable verification runner: the new `--run-commands` flag executes declared `MustPassCommand` gates sequentially, fail-fast, with a default 600-second per-command timeout, streaming compact progress for agents and pipes or live output on interactive terminals while keeping stdout clean for the lint report and JSON evidence. Every run is persisted under the cache with machine-readable metadata, per-command timings, bounded failure tails, and full logs, and interrupted runs are killed as a process group and honestly recorded rather than silently discarded; the CLI also gains `--command-timeout`, `--verbose`, and `--quiet` controls with TTY-aware resolution. Skill documentation now defines the run-commands output contract and gate task conventions, recommending granular named tasks such as test, typecheck, build, and e2e gates so selective re-runs and timeouts map to coherent units, and treats flaky gates as verification defects to diagnose from per-attempt logs and fix rather than mask with blind re-runs. The runtime is additionally pinned to Bun 1.3.14 for reproducible packaging.
+
+* docs(skills): document run-commands contract and gate task conventions ([fe01024](https://github.com/osovv/grace-marketplace/commit/fe01024))
+* feat(lint): add thin command runner and run log store ([810a8c1](https://github.com/osovv/grace-marketplace/commit/810a8c1))
+* feat(lint): observable --run-commands execution with evidence and timeout ([0aa4adc](https://github.com/osovv/grace-marketplace/commit/0aa4adc))
+* chore: pin bun 1.3.14 via .tool-versions ([31c0199](https://github.com/osovv/grace-marketplace/commit/31c0199))
+
 ## <small>4.0.5 (2026-08-23)</small>
 
 ### Summary

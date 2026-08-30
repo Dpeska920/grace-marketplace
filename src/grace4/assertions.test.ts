@@ -5,7 +5,9 @@ import { describe, expect, it } from "bun:test";
 
 import { resolveGrace4Paths } from "./project";
 import { buildGraphProjection, buildVerificationProjection } from "./projections";
+import { runDeclaredCommands } from "./command-runner";
 import { evaluateAssertion, extractAssertionsWithIssues, type AssertionContext, type GraceAssertion } from "./assertions";
+import type { CommandRunResult } from "./command-runner";
 
 function createProject() {
   const root = path.join(os.tmpdir(), `grace4-assertions-${crypto.randomUUID()}`);
@@ -94,30 +96,86 @@ describe("GRACE 4 assertions", () => {
     expect(evaluateAssertion(assertion("MustPassCommand", ["exit 99"]), { ...ctx, runCommands: true })).toHaveLength(1);
   });
 
-  (process.platform === "win32" ? it : it.skip)("executes command assertions through Windows cmd.exe", () => {
+  (process.platform === "win32" ? it : it.skip)("executes command assertions through Windows cmd.exe", async () => {
     const root = createProject();
     writeProjectionFixture(root);
-    expect(evaluateAssertion(assertion("MustPassCommand", ["exit /b 0"]), { ...context(root), runCommands: true })).toHaveLength(0);
+    const summary = await runDeclaredCommands(
+      [{ assertionKey: "plan.xml::TargetAssertions::0", assertionId: "plan.xml#1", command: "exit /b 0" }],
+      {
+        root,
+        assertionMode: "target",
+        timeoutMs: 10_000,
+        verbosity: "compact",
+        progress: () => {},
+        logRoot: path.join(os.tmpdir(), `grace4-cmdexe-${crypto.randomUUID()}`),
+      },
+    );
+    expect(summary.status).toBe("passed");
+    expect(summary.commands[0]?.exitCode).toBe(0);
   });
 
-  (process.platform === "win32" ? it.skip : it)("executes commands through POSIX sh regardless of the caller's $SHELL", () => {
+  it("maps pre-computed command results to assertion issues without spawning", () => {
     const root = createProject();
     writeProjectionFixture(root);
-    // Word splitting: sh yields n=3; zsh without SH_WORD_SPLIT would yield 1.
-    // The assertion must pass on any machine, including ones where $SHELL=zsh.
-    const command = 'tgt=$(printf "a\\nb\\nc\\n"); n=0; for t in $tgt; do n=$((n+1)); done; test "$n" -eq 3';
-    const previousShell = process.env.SHELL;
-    process.env.SHELL = "/bin/zsh";
-    try {
-      expect(evaluateAssertion(assertion("MustPassCommand", [command]), { ...context(root), runCommands: true })).toHaveLength(0);
-    } finally {
-      if (previousShell === undefined) {
-        delete process.env.SHELL;
-      } else {
-        process.env.SHELL = previousShell;
-      }
-    }
+    const slotKey = "plan.xml::TargetAssertions::0";
+    const commandAssertion: GraceAssertion = { kind: "MustPassCommand", values: ["bun run gate"], file: "plan.xml", slotKey };
+    const result = (overrides: Partial<CommandRunResult>): CommandRunResult => ({
+      index: 1,
+      assertionKey: slotKey,
+      assertionId: "plan.xml#1",
+      command: "bun run gate",
+      exitCode: 0,
+      durationMs: 1000,
+      timedOut: false,
+      skipped: false,
+      logFile: null,
+      outputTail: null,
+      ...overrides,
+    });
+
+    const passing: AssertionContext = {
+      ...context(root),
+      runCommands: true,
+      commandResults: new Map([[slotKey, [result({})]]]),
+    };
+    expect(evaluateAssertion(commandAssertion, passing)).toHaveLength(0);
+
+    const failing: AssertionContext = {
+      ...context(root),
+      runCommands: true,
+      commandResults: new Map([[slotKey, [result({ exitCode: 3, outputTail: "boom-tail" })]]]),
+    };
+    const failure = evaluateAssertion(commandAssertion, failing);
+    expect(failure).toHaveLength(1);
+    expect(failure[0]?.message).toContain("Command failed (3): bun run gate");
+    expect(failure[0]?.message).toContain("boom-tail");
+
+    const timedOut: AssertionContext = {
+      ...context(root),
+      runCommands: true,
+      commandResults: new Map([[slotKey, [result({ exitCode: null, timedOut: true, durationMs: 600_000 })]]]),
+    };
+    const timeoutIssue = evaluateAssertion(commandAssertion, timedOut);
+    expect(timeoutIssue).toHaveLength(1);
+    expect(timeoutIssue[0]?.message).toContain("Command timed out after 600s: bun run gate");
+
+    const skippedThenFailed: AssertionContext = {
+      ...context(root),
+      runCommands: true,
+      commandResults: new Map([[slotKey, [result({ skipped: true }), result({ exitCode: 1 })]]]),
+    };
+    expect(evaluateAssertion(commandAssertion, skippedThenFailed)).toHaveLength(1);
+
+    const missing: AssertionContext = { ...context(root), runCommands: true };
+    const unavailable = evaluateAssertion(commandAssertion, missing);
+    expect(unavailable).toHaveLength(1);
+    expect(unavailable[0]?.message).toContain("Command results unavailable");
   });
+
+  // The POSIX-shell-regardless-of-$SHELL contract now lives in command-runner.ts
+  // (spawnShellCommand / shellArgv), exercised by "runDeclaredCommands shell
+  // contract" in command-runner.test.ts: evaluateAssertion no longer spawns
+  // anything itself, it only reads pre-computed context.commandResults.
 
   it("rejects missing, extra, duplicate, nested, and empty assertion fields", () => {
     const root = createProject();
