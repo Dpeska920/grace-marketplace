@@ -242,14 +242,33 @@ function applyTextMatch(matchedBy: Set<string>, label: string, query: string, ca
   return 0;
 }
 
+/**
+ * Normalizes a raw graph `<Path>` value for directory-prefix comparison only.
+ * Graph paths naming a directory conventionally carry a trailing slash, while
+ * `normalizeInputPath` never produces one, so the trailing separator is
+ * stripped locally here. The raw `moduleRecord.graph.path` (and whatever
+ * `extractPath` stored) is left untouched — it still feeds the PATH column
+ * of `grace module find` output verbatim.
+ */
+function normalizeGraphPathForMatch(graphPath: string): string | undefined {
+  const strippedPath = toPosixPath(graphPath).replace(/\/+$/, "");
+  if (!strippedPath || strippedPath === "." || strippedPath === "..") {
+    return undefined;
+  }
+  return strippedPath;
+}
+
 function pathMatchScore(moduleRecord: ModuleRecord, targetPath: string) {
   let bestScore = 0;
   const graphPath = moduleRecord.graph.path;
   if (graphPath) {
-    if (graphPath === targetPath) {
-      bestScore = Math.max(bestScore, 100000 + graphPath.length);
-    } else if (targetPath.startsWith(`${graphPath}/`)) {
-      bestScore = Math.max(bestScore, 90000 + graphPath.length);
+    const normalizedGraphPath = normalizeGraphPathForMatch(graphPath);
+    if (normalizedGraphPath) {
+      if (normalizedGraphPath === targetPath) {
+        bestScore = Math.max(bestScore, 100000 + normalizedGraphPath.length);
+      } else if (targetPath.startsWith(`${normalizedGraphPath}/`)) {
+        bestScore = Math.max(bestScore, 90000 + normalizedGraphPath.length);
+      }
     }
   }
   if (moduleRecord.graph.text.includes(targetPath)) {

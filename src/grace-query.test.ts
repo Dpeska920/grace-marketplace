@@ -180,6 +180,70 @@ describe("grace query core", () => {
     expect(providerModule.id).toBe("M-PROVIDER-PERSIST");
   });
 
+  it("resolves a module by directory-prefix match when its graph Path ends with a trailing slash and the target file carries no markup", () => {
+    const root = createProject();
+    writeProjectSkeleton(root);
+    writeProjectFile(root, ".grace/graph/index.xml", '<GraceGraphIndex graceVersion="4.0"><GraphDocuments><GD-MAIN><Path>graph/main.xml</Path><Owns><M-SLASHED /></Owns></GD-MAIN></GraphDocuments></GraceGraphIndex>');
+    writeProjectFile(root, ".grace/graph/main.xml", '<GraceGraphDocument graceVersion="4.0"><GD-MAIN><M-SLASHED><Summary>Slashed directory module</Summary><Path>src/slashed/</Path></M-SLASHED></GD-MAIN></GraceGraphDocument>');
+    writeProjectFile(root, ".grace/verification/index.xml", '<GraceVerificationIndex graceVersion="4.0"><VerificationDocuments><VD-MAIN><Path>verification/main.xml</Path><Owns><V-M-SLASHED /></Owns></VD-MAIN></VerificationDocuments></GraceVerificationIndex>');
+    writeProjectFile(root, ".grace/verification/main.xml", '<GraceVerificationDocument graceVersion="4.0"><VD-MAIN><V-M-SLASHED><Scenario>Slashed module works.</Scenario></V-M-SLASHED></VD-MAIN></GraceVerificationDocument>');
+    // No MODULE_CONTRACT/LINKS markup and no mention of this exact file path in the graph document text:
+    // the directory-prefix branch of pathMatchScore is the only branch that can resolve this query.
+    writeProjectFile(root, "src/slashed/handler.ts", "export const handler = true;\n");
+
+    const index = loadGraceArtifactIndex(root);
+    const resolved = resolveModule(index, "src/slashed/handler.ts");
+
+    expect(resolved.id).toBe("M-SLASHED");
+  });
+
+  it("resolves a slash-terminated module by its own directory path queried without the trailing slash", () => {
+    const root = createProject();
+    writeProjectSkeleton(root);
+    writeProjectFile(root, ".grace/graph/index.xml", '<GraceGraphIndex graceVersion="4.0"><GraphDocuments><GD-MAIN><Path>graph/main.xml</Path><Owns><M-SLASHED /></Owns></GD-MAIN></GraphDocuments></GraceGraphIndex>');
+    writeProjectFile(root, ".grace/graph/main.xml", '<GraceGraphDocument graceVersion="4.0"><GD-MAIN><M-SLASHED><Summary>Slashed directory module</Summary><Path>src/slashed/</Path></M-SLASHED></GD-MAIN></GraceGraphDocument>');
+    writeProjectFile(root, ".grace/verification/index.xml", '<GraceVerificationIndex graceVersion="4.0"><VerificationDocuments><VD-MAIN><Path>verification/main.xml</Path><Owns><V-M-SLASHED /></Owns></VD-MAIN></VerificationDocuments></GraceVerificationIndex>');
+    writeProjectFile(root, ".grace/verification/main.xml", '<GraceVerificationDocument graceVersion="4.0"><VD-MAIN><V-M-SLASHED><Scenario>Slashed module works.</Scenario></V-M-SLASHED></VD-MAIN></GraceVerificationDocument>');
+
+    const index = loadGraceArtifactIndex(root);
+    const resolved = resolveModule(index, "src/slashed");
+
+    expect(resolved.id).toBe("M-SLASHED");
+  });
+
+  it("still resolves a module by directory-prefix match when its graph Path has no trailing slash", () => {
+    const root = createProject();
+    writeProjectSkeleton(root);
+    writeProjectFile(root, ".grace/graph/index.xml", '<GraceGraphIndex graceVersion="4.0"><GraphDocuments><GD-MAIN><Path>graph/main.xml</Path><Owns><M-PLAIN /></Owns></GD-MAIN></GraphDocuments></GraceGraphIndex>');
+    writeProjectFile(root, ".grace/graph/main.xml", '<GraceGraphDocument graceVersion="4.0"><GD-MAIN><M-PLAIN><Summary>Plain directory module</Summary><Path>src/plain</Path></M-PLAIN></GD-MAIN></GraceGraphDocument>');
+    writeProjectFile(root, ".grace/verification/index.xml", '<GraceVerificationIndex graceVersion="4.0"><VerificationDocuments><VD-MAIN><Path>verification/main.xml</Path><Owns><V-M-PLAIN /></Owns></VD-MAIN></VerificationDocuments></GraceVerificationIndex>');
+    writeProjectFile(root, ".grace/verification/main.xml", '<GraceVerificationDocument graceVersion="4.0"><VD-MAIN><V-M-PLAIN><Scenario>Plain module works.</Scenario></V-M-PLAIN></VD-MAIN></GraceVerificationDocument>');
+    writeProjectFile(root, "src/plain/handler.ts", "export const handler = true;\n");
+
+    const index = loadGraceArtifactIndex(root);
+    const resolved = resolveModule(index, "src/plain/handler.ts");
+
+    expect(resolved.id).toBe("M-PLAIN");
+  });
+
+  it("does not let a degenerate graph Path of './' reach the directory-prefix or exact-match score band", () => {
+    const root = createProject();
+    writeProjectSkeleton(root);
+    writeProjectFile(root, ".grace/graph/index.xml", '<GraceGraphIndex graceVersion="4.0"><GraphDocuments><GD-MAIN><Path>graph/main.xml</Path><Owns><M-ROOT /></Owns></GD-MAIN></GraphDocuments></GraceGraphIndex>');
+    writeProjectFile(root, ".grace/graph/main.xml", '<GraceGraphDocument graceVersion="4.0"><GD-MAIN><M-ROOT><Summary>Degenerate root module</Summary><Path>./</Path></M-ROOT></GD-MAIN></GraceGraphDocument>');
+    writeProjectFile(root, ".grace/verification/index.xml", '<GraceVerificationIndex graceVersion="4.0"><VerificationDocuments><VD-MAIN><Path>verification/main.xml</Path><Owns><V-M-ROOT /></Owns></VD-MAIN></VerificationDocuments></GraceVerificationIndex>');
+    writeProjectFile(root, ".grace/verification/main.xml", '<GraceVerificationDocument graceVersion="4.0"><VD-MAIN><V-M-ROOT><Scenario>Root module works.</Scenario></V-M-ROOT></VD-MAIN></GraceVerificationDocument>');
+
+    const index = loadGraceArtifactIndex(root);
+    const matches = findModules(index, { query: "." });
+
+    // The exact-match band starts at 100000/1000=100 and the directory-prefix band at 90; a
+    // degenerate Path normalizing to "." must not reach either, only the harmless graph-text
+    // substring fallback band (~80) that any Path containing a literal dot trivially reaches.
+    const rootMatch = matches.find((match) => match.module.id === "M-ROOT");
+    expect(rootMatch?.score).toBeLessThan(90);
+  });
+
   it("parses file-local contracts and blocks for file show", () => {
     const root = createQueryProject();
     const index = loadGraceArtifactIndex(root);
